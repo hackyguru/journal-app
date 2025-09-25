@@ -34,17 +34,22 @@ A beautiful, native iOS-style React Native app for capturing and managing daily 
 - iOS Simulator or physical iOS device
 
 ### Environment Setup
-Create a `.env` file in the root directory:
-```env
-EXPO_PUBLIC_BACKEND_URL=http://localhost:3001
-```
 
-Create a `.env` file in the `backend` directory:
-```env
-PINECONE_API_KEY=your_pinecone_api_key
-OPENAI_API_KEY=your_openai_api_key
-ASSEMBLYAI_API_KEY=your_assemblyai_api_key
-```
+1. **Frontend Environment**
+   ```bash
+   cp .env.example .env
+   # Edit .env and set your backend URL
+   ```
+
+2. **Backend Environment**
+   ```bash
+   cd backend
+   cp .env.example .env
+   # Edit .env and add your actual API keys:
+   # - Get Pinecone API key from https://pinecone.io
+   # - Get OpenAI API key from https://openai.com
+   # - Get AssemblyAI API key from https://assemblyai.com
+   ```
 
 ### Installation
 

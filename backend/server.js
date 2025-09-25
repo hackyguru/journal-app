@@ -15,7 +15,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Initialize Pinecone
 const pc = new Pinecone({
-  apiKey: process.env.PINECONE_API_KEY || 'pcsk_5rf25M_8kQ5DG4iLQx1hDPH5Es3fawdP67ozA2c5hwVBFXuRb3oSbcAc4syA5sZkZ1C7oa'
+  apiKey: process.env.PINECONE_API_KEY
 });
 
 // Initialize OpenAI (with graceful handling for missing API key)
