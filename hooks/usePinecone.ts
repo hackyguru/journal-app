@@ -1,3 +1,4 @@
+import { getTodayLocalDate } from '@/utils/dateUtils';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useState } from 'react';
 
@@ -51,7 +52,7 @@ export const usePinecone = () => {
         requestBody.date = metadata.date;
       } else {
         // Default to today's date
-        requestBody.date = new Date().toISOString().split('T')[0];
+        requestBody.date = getTodayLocalDate();
       }
       
       if (metadata) {

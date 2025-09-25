@@ -1,8 +1,10 @@
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
 const { Pinecone } = require('@pinecone-database/pinecone');
 const OpenAI = require('openai');
 const { AssemblyAI } = require('assemblyai');
+const { WebSocketServer } = require('ws');
 require('dotenv').config();
 
 const app = express();
@@ -12,6 +14,21 @@ const port = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json({ limit: '50mb' })); // Increase payload limit for audio files
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('audio/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only audio files are allowed'), false);
+    }
+  },
+});
 
 // Initialize Pinecone
 const pc = new Pinecone({
@@ -139,21 +156,37 @@ app.post('/api/memories', async (req, res) => {
     }
 
     // Validate date format and ensure it's today
-    const memoryDate = new Date(date);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    memoryDate.setHours(0, 0, 0, 0);
+    const isValidDateFormat = (dateStr) => {
+      const regex = /^\d{4}-\d{2}-\d{2}$/;
+      return regex.test(dateStr);
+    };
 
+    const getTodayLocalDate = () => {
+      const today = new Date();
+      return today.getFullYear() + '-' + 
+        String(today.getMonth() + 1).padStart(2, '0') + '-' + 
+        String(today.getDate()).padStart(2, '0');
+    };
 
-    if (memoryDate.getTime() !== today.getTime()) {
+    if (!isValidDateFormat(date)) {
+      return res.status(400).json({ 
+        error: 'Invalid date format',
+        message: 'Date must be in YYYY-MM-DD format'
+      });
+    }
+
+    const todayStr = getTodayLocalDate();
+    console.log('📅 Date validation:', { received: date, expected: todayStr, match: date === todayStr });
+    
+    if (date !== todayStr) {
       return res.status(400).json({ 
         error: 'Can only create memories for today',
-        message: 'You can only add memories for the current day'
+        message: `You can only add memories for the current day (${todayStr}). Received: ${date}`
       });
     }
 
     const index = pc.index(indexName);
-    const dateStr = memoryDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const dateStr = date; // Already in YYYY-MM-DD format
     
     // Check if memory already exists for this date
     const namespace = index.namespace('default');
@@ -167,6 +200,14 @@ app.post('/api/memories', async (req, res) => {
     const existingMemory = existingQuery.matches?.find(match => 
       match.metadata?.date === dateStr
     );
+
+    console.log('🔍 Existing memory check:', {
+      dateStr,
+      totalMatches: existingQuery.matches?.length || 0,
+      allDates: existingQuery.matches?.map(m => m.metadata?.date) || [],
+      existingMemoryFound: !!existingMemory,
+      existingMemoryDate: existingMemory?.metadata?.date
+    });
 
     if (existingMemory) {
       return res.status(400).json({
@@ -190,7 +231,7 @@ app.post('/api/memories', async (req, res) => {
         date: dateStr,
         timestamp: new Date().toISOString(),
         source: 'daily_memory',
-        weekday: memoryDate.toLocaleDateString('en-US', { weekday: 'long' }),
+        weekday: new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' }),
         ...metadata,
       },
     ]);
@@ -644,74 +685,189 @@ app.get('/api/memories/week', async (req, res) => {
   }
 });
 
-// Audio transcription endpoint using OpenAI Whisper
-app.post('/api/transcribe', async (req, res) => {
+// Debug endpoint to list all memories with dates
+app.get('/api/debug/memories', async (req, res) => {
   try {
-    const { audioData, audioFormat } = req.body;
+    const index = pc.index(indexName);
+    const namespace = index.namespace('default');
     
-    if (!audioData) {
-      return res.status(400).json({ error: 'Audio data is required' });
-    }
-
-    if (!openai) {
-      return res.status(503).json({ 
-        error: 'OpenAI API key not configured', 
-        message: 'Please add OPENAI_API_KEY to your .env file to enable voice transcription'
-      });
-    }
-
-    console.log('🎤 Transcribing audio with OpenAI Whisper...');
-
-    // Convert base64 audio data to buffer
-    const audioBuffer = Buffer.from(audioData, 'base64');
-    
-    // Create form data for Whisper API
-    const FormData = require('form-data');
-    const formData = new FormData();
-    
-    // Add the audio buffer directly to form data
-    formData.append('file', audioBuffer, {
-      filename: 'recording.wav',
-      contentType: 'audio/wav',
-    });
-    formData.append('model', 'whisper-1');
-    formData.append('language', 'en');
-
-    // Send to OpenAI Whisper
-    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        ...formData.getHeaders(),
-      },
-      body: formData,
+    const queryResponse = await namespace.query({
+      topK: 100,
+      includeMetadata: true,
+      includeValues: false,
+      vector: new Array(1024).fill(0.001),
     });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Whisper API error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
-    }
+    const memories = queryResponse.matches?.map(match => ({
+      id: match.id,
+      date: match.metadata?.date,
+      text: match.metadata?.text?.substring(0, 50) + '...',
+      timestamp: match.metadata?.timestamp,
+      source: match.metadata?.source
+    })) || [];
 
-    const result = await response.json();
-    console.log('✅ Whisper transcription completed:', result.text?.substring(0, 100) + '...');
+    const todayStr = (() => {
+      const today = new Date();
+      return today.getFullYear() + '-' + 
+        String(today.getMonth() + 1).padStart(2, '0') + '-' + 
+        String(today.getDate()).padStart(2, '0');
+    })();
 
     res.json({
       success: true,
-      transcription: result.text || '',
-      message: 'Audio transcribed successfully'
+      todayDate: todayStr,
+      totalMemories: memories.length,
+      memories: memories.sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+      memoriesToday: memories.filter(m => m.date === todayStr)
     });
-
   } catch (error) {
-    console.error('Error transcribing audio:', error);
+    console.error('Error getting debug memories:', error);
     res.status(500).json({
-      error: 'Failed to transcribe audio',
+      error: 'Failed to get debug memories',
       details: error.message
     });
   }
 });
 
-// AssemblyAI transcription endpoint
-app.post('/api/transcribe-assemblyai', async (req, res) => {
+// Delete memory by ID (for debugging)
+app.delete('/api/debug/memories/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const index = pc.index(indexName);
+    const namespace = index.namespace('default');
+    
+    await namespace.deleteMany([id]);
+    
+    res.json({
+      success: true,
+      message: `Memory ${id} deleted successfully`
+    });
+  } catch (error) {
+    console.error('Error deleting memory:', error);
+    res.status(500).json({
+      error: 'Failed to delete memory',
+      details: error.message
+    });
+  }
+});
+
+// File upload transcription endpoint using AssemblyAI
+app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Audio file is required' });
+    }
+
+    if (!assemblyaiApiKey) {
+      return res.status(503).json({ 
+        error: 'AssemblyAI API key not configured', 
+        message: 'Please add ASSEMBLYAI_API_KEY to your .env file to enable real-time transcription'
+      });
+    }
+
+    console.log('🎤 Transcribing audio file with AssemblyAI...', { 
+      filename: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size 
+    });
+
+    // Read the uploaded file
+    const audioBuffer = req.file.buffer;
+
+    // Upload audio to AssemblyAI
+    const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${assemblyaiApiKey}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: audioBuffer,
+    });
+
+    if (!uploadResponse.ok) {
+      throw new Error(`Failed to upload audio: ${uploadResponse.status}`);
+    }
+
+    const uploadResult = await uploadResponse.json();
+    console.log('📤 Audio uploaded to AssemblyAI:', uploadResult.upload_url);
+
+    // Request transcription
+    const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${assemblyaiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        audio_url: uploadResult.upload_url,
+        speech_model: 'best',
+        language_code: 'en',
+        punctuate: true,
+        format_text: true,
+      }),
+    });
+
+    if (!transcriptResponse.ok) {
+      throw new Error(`Failed to request transcription: ${transcriptResponse.status}`);
+    }
+
+    const transcriptResult = await transcriptResponse.json();
+    console.log('🔄 Transcription requested:', transcriptResult.id);
+
+    // Poll for completion
+    let transcript;
+    const maxAttempts = 60; // 5 minutes max
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptResult.id}`, {
+        headers: {
+          'Authorization': `Bearer ${assemblyaiApiKey}`,
+        },
+      });
+
+      if (!statusResponse.ok) {
+        throw new Error(`Failed to check transcription status: ${statusResponse.status}`);
+      }
+
+      transcript = await statusResponse.json();
+      
+      if (transcript.status === 'completed') {
+        console.log('✅ Transcription completed successfully');
+        break;
+      } else if (transcript.status === 'error') {
+        throw new Error(`Transcription failed: ${transcript.error}`);
+      }
+
+      // Wait 5 seconds before next poll
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      attempts++;
+    }
+
+    if (transcript.status !== 'completed') {
+      throw new Error('Transcription timed out');
+    }
+
+    res.json({
+      success: true,
+      transcript: transcript.text,
+      confidence: transcript.confidence,
+      processing_time: transcript.audio_duration,
+    });
+
+  } catch (error) {
+    console.error('❌ Transcription error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to transcribe audio',
+      details: error.stack
+    });
+  }
+});
+
+// Legacy base64 transcription endpoint using OpenAI Whisper
+app.post('/api/transcribe-whisper', async (req, res) => {
   try {
     const { audioData, audioFormat } = req.body;
     
@@ -791,6 +947,64 @@ app.post('/api/transcribe-assemblyai', async (req, res) => {
   }
 });
 
+// Simple file upload transcription endpoint for recorded audio files
+app.post('/api/transcribe-file', upload.single('audio'), async (req, res) => {
+  try {
+    console.log('🎤 File transcription request received');
+    
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Audio file is required' 
+      });
+    }
+
+    if (!assemblyaiApiKey) {
+      return res.status(503).json({ 
+        success: false,
+        error: 'AssemblyAI API key not configured' 
+      });
+    }
+
+    console.log('📁 Processing audio file:', {
+      filename: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    });
+
+    // Upload to AssemblyAI and transcribe
+    const transcript = await assemblyai.transcripts.transcribe({
+      audio: req.file.buffer,
+      speech_model: 'best'
+    });
+
+    if (transcript.status === 'error') {
+      console.error('❌ AssemblyAI transcription error:', transcript.error);
+      return res.status(500).json({
+        success: false,
+        error: `Transcription error: ${transcript.error}`
+      });
+    }
+
+    console.log('✅ File transcription completed:', transcript.text?.substring(0, 100) + '...');
+    
+    res.json({
+      success: true,
+      text: transcript.text,
+      confidence: transcript.confidence,
+      message: 'Audio transcribed successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ File transcription error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to transcribe audio file',
+      details: error.message
+    });
+  }
+});
+
 // List all memories endpoint (for debugging)
 app.get('/api/memories', async (req, res) => {
   try {
@@ -837,11 +1051,176 @@ async function startServer() {
     process.exit(1);
   }
 
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`✅ Server running on http://localhost:${port}`);
     console.log(`📊 Health check: http://localhost:${port}/health`);
     console.log(`💾 Store memory: POST http://localhost:${port}/api/memories`);
     console.log(`🔍 Search memories: POST http://localhost:${port}/api/memories/search`);
+    console.log(`🎤 Streaming transcription: WS http://localhost:${port}/ws/transcribe`);
+  });
+
+  // Create WebSocket server for streaming transcription
+  const wss = new WebSocketServer({ server, path: '/ws/transcribe' });
+
+  wss.on('connection', (ws) => {
+    console.log('🎤 New WebSocket connection for streaming transcription');
+    let assemblyAiRt = null;
+
+    ws.on('message', async (message) => {
+      try {
+        const data = JSON.parse(message);
+        
+        if (data.type === 'start') {
+          console.log('🎯 Starting real-time transcription session');
+          
+          if (!assemblyaiApiKey) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              error: 'AssemblyAI API key not configured'
+            }));
+            return;
+          }
+
+          // Create AssemblyAI streaming transcription session with new API
+          assemblyAiRt = assemblyai.streaming.transcriber({
+            sampleRate: data.sampleRate || 16000,
+            wordBoost: ['memory', 'feeling', 'today', 'yesterday', 'tomorrow'],
+            formatTurns: true
+          });
+
+          // Handle transcription events with new API
+          assemblyAiRt.on('open', ({ id }) => {
+            console.log('✅ AssemblyAI streaming session opened with ID:', id);
+            ws.send(JSON.stringify({ type: 'session_opened', sessionId: id }));
+          });
+
+          assemblyAiRt.on('turn', (turn) => {
+            if (!turn.transcript) {
+              return;
+            }
+            console.log('📝 Turn received:', turn.transcript);
+            ws.send(JSON.stringify({
+              type: 'transcript',
+              text: turn.transcript,
+              message_type: 'FinalTranscript',
+              confidence: turn.confidence || 0.9
+            }));
+          });
+
+          assemblyAiRt.on('error', (error) => {
+            console.error('❌ AssemblyAI error:', error);
+            ws.send(JSON.stringify({
+              type: 'error',
+              error: error.message || error.toString()
+            }));
+          });
+
+          assemblyAiRt.on('close', (code, reason) => {
+            console.log('🔚 AssemblyAI session closed:', code, reason);
+            ws.send(JSON.stringify({ type: 'session_closed', code, reason }));
+          });
+
+          // Connect to AssemblyAI with new API
+          await assemblyAiRt.connect();
+
+        } else if (data.type === 'audio_data' && assemblyAiRt) {
+          // Forward audio data to AssemblyAI streaming API
+          const audioBuffer = Buffer.from(data.audio, 'base64');
+          // Send audio data to the stream
+          if (assemblyAiRt.stream() && !assemblyAiRt.stream().destroyed) {
+            assemblyAiRt.stream().write(audioBuffer);
+          }
+
+        } else if (data.type === 'stop' && assemblyAiRt) {
+          console.log('🛑 Stopping transcription session');
+          await assemblyAiRt.close();
+          assemblyAiRt = null;
+
+        } else if (data.type === 'save_memory') {
+          // Save the final transcription as a memory
+          console.log('💾 Saving transcribed memory:', data.text?.substring(0, 50) + '...');
+          
+          if (!data.text || !data.date) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              error: 'Missing text or date for memory'
+            }));
+            return;
+          }
+
+          try {
+            // Use the same logic as the regular memory endpoint
+            const index = pc.index(indexName);
+            const namespace = index.namespace('default');
+            const dateStr = data.date;
+            
+            // Check if memory already exists for this date
+            const existingQuery = await namespace.query({
+              topK: 100,
+              includeMetadata: true,
+              includeValues: false,
+              vector: new Array(1024).fill(0.001),
+            });
+
+            const existingMemory = existingQuery.matches?.find(match => 
+              match.metadata?.date === dateStr
+            );
+
+            if (existingMemory) {
+              ws.send(JSON.stringify({
+                type: 'error',
+                error: 'Memory already exists for this date'
+              }));
+              return;
+            }
+
+            const id = `memory-${dateStr}-${Math.random().toString(36).substr(2, 9)}`;
+            
+            // Save to Pinecone with integrated embeddings
+            await namespace.upsertRecords([{
+              _id: id,
+              text: data.text,
+              date: dateStr,
+              timestamp: new Date().toISOString(),
+              source: 'streaming_voice',
+              weekday: new Date(data.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' }),
+            }]);
+
+            console.log('✅ Streaming memory saved successfully');
+            ws.send(JSON.stringify({
+              type: 'memory_saved',
+              id: id,
+              date: dateStr
+            }));
+
+          } catch (error) {
+            console.error('❌ Error saving streaming memory:', error);
+            ws.send(JSON.stringify({
+              type: 'error',
+              error: 'Failed to save memory: ' + error.message
+            }));
+          }
+        }
+
+      } catch (error) {
+        console.error('❌ WebSocket message error:', error);
+        ws.send(JSON.stringify({
+          type: 'error',
+          error: 'Invalid message format'
+        }));
+      }
+    });
+
+    ws.on('close', async () => {
+      console.log('🔌 WebSocket connection closed');
+      if (assemblyAiRt) {
+        await assemblyAiRt.close();
+      }
+    });
+
+    ws.on('error', (error) => {
+      console.error('❌ WebSocket error:', error);
+    });
   });
 }
 

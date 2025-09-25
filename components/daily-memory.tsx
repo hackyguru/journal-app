@@ -1,7 +1,9 @@
 import { usePinecone } from '@/hooks/usePinecone';
+import { formatDateForDisplay, isToday } from '@/utils/dateUtils';
 import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ConversationalAssistant from './conversational-assistant';
+import StreamingVoiceAssistant from './streaming-voice-assistant';
 import { IOSBorderRadius, IOSButtonStyles, IOSButtonTextStyles, IOSCardStyles, IOSColors, IOSSpacing, IOSTypography } from './ui/ios-design-system';
 
 interface DailyMemoryProps {
@@ -15,28 +17,12 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
   const [isEditing, setIsEditing] = useState(false);
   const [inputMethod, setInputMethod] = useState<'text' | 'voice' | 'conversation'>('text');
   const [showConversationalAssistant, setShowConversationalAssistant] = useState(false);
+  const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
   const [isLoadingMemory, setIsLoadingMemory] = useState(false);
   const { upsertData, isLoading, error } = usePinecone();
 
-  const isToday = () => {
-    // Fix timezone issue - use local date instead of UTC
-    const today = new Date();
-    const todayStr = today.getFullYear() + '-' + 
-      String(today.getMonth() + 1).padStart(2, '0') + '-' + 
-      String(today.getDate()).padStart(2, '0');
-    
-    return selectedDate === todayStr;
-  };
-
-  const formatDate = () => {
-    const date = new Date(selectedDate);
-    return date.toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
-    });
-  };
+  const isTodayDate = () => isToday(selectedDate);
+  const formatDate = () => formatDateForDisplay(selectedDate);
 
   const handleSaveMemory = async () => {
     if (!memoryText.trim()) {
@@ -44,7 +30,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
       return;
     }
 
-    if (!isToday()) {
+    if (!isTodayDate()) {
       Alert.alert('Invalid Date', 'You can only create memories for today.');
       return;
     }
@@ -67,7 +53,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
   };
 
   const handleEditMemory = () => {
-    if (!isToday()) {
+    if (!isTodayDate()) {
       Alert.alert('Cannot Edit', 'You can only edit today\'s memory.');
       return;
     }
@@ -103,8 +89,29 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     }
   };
 
+  const handleVoiceMemoryComplete = async (memoryText: string) => {
+    setMemoryText(memoryText);
+    setShowVoiceAssistant(false);
+    
+    // Memory was already saved via WebSocket in the streaming assistant
+    // Just update the UI and show success
+    console.log('✅ Voice memory completed:', memoryText);
+    Alert.alert('Memory Saved!', 'Your voice memory has been saved successfully.');
+    setExistingMemory({ text: memoryText.trim(), date: selectedDate });
+    setIsEditing(false);
+    onMemoryUpdate(true);
+    
+    // Refresh the memory display
+    loadExistingMemory(selectedDate);
+  };
+
   const handleCloseConversationalAssistant = () => {
     setShowConversationalAssistant(false);
+    setIsEditing(false);
+  };
+
+  const handleCloseVoiceAssistant = () => {
+    setShowVoiceAssistant(false);
     setIsEditing(false);
   };
 
@@ -154,13 +161,14 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     setMemoryText('');
     setIsEditing(false);
     setShowConversationalAssistant(false);
+    setShowVoiceAssistant(false);
 
     // Load existing memory for the selected date
     loadExistingMemory(selectedDate);
   }, [selectedDate]);
 
   const renderEmptyState = () => {
-    if (!isToday()) {
+    if (!isTodayDate()) {
       // Clean message for non-today dates
       return (
         <View style={styles.pastDateContainer}>
@@ -200,8 +208,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
           <TouchableOpacity 
             style={styles.compactOption}
             onPress={() => {
-              setInputMethod('voice');
-              setIsEditing(true);
+              setShowVoiceAssistant(true);
             }}
           >
             <Text style={styles.compactOptionIcon}>🎤</Text>
@@ -217,9 +224,9 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
       <View style={styles.memoryDisplayHeader}>
         <View style={styles.memoryStatusContainer}>
           <View style={styles.memoryStatusDot} />
-          <Text style={styles.memoryStatusText}>Memory Saved</Text>
+          <Text style={styles.memoryStatusText}>Memory</Text>
         </View>
-        {isToday() && (
+        {isTodayDate() && (
           <TouchableOpacity 
             style={styles.editMemoryButton}
             onPress={handleEditMemory}
@@ -229,12 +236,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
         )}
       </View>
       
-      <View style={styles.memoryDisplayContent}>
-        <Text style={styles.memoryDisplayDate}>{formatDate()}</Text>
-        <View style={styles.memoryTextContainer}>
-          <Text style={styles.memoryDisplayText}>{existingMemory.text}</Text>
-        </View>
-      </View>
+      <Text style={styles.memoryDisplayText}>{existingMemory.text}</Text>
     </View>
   );
 
@@ -245,74 +247,23 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
       </Text>
       <Text style={styles.editorSubtitle}>{formatDate()}</Text>
       
-      {/* Input Method Toggle */}
-      <View style={styles.inputMethodToggle}>
-        <TouchableOpacity
-          style={[
-            styles.toggleButton,
-            inputMethod === 'text' && styles.activeToggleButton
-          ]}
-          onPress={() => setInputMethod('text')}
-        >
-          <Text style={[
-            styles.toggleButtonText,
-            inputMethod === 'text' && styles.activeToggleButtonText
-          ]}>
-            ✏️ Text
-          </Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[
-            styles.toggleButton,
-            inputMethod === 'voice' && styles.activeToggleButton
-          ]}
-          onPress={() => setInputMethod('voice')}
-        >
-          <Text style={[
-            styles.toggleButtonText,
-            inputMethod === 'voice' && styles.activeToggleButtonText
-          ]}>
-            🎤 Voice
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <TextInput
+        style={styles.textInput}
+        placeholder="What happened today? How are you feeling? What did you learn?"
+        placeholderTextColor={IOSColors.tertiaryLabel}
+        value={memoryText}
+        onChangeText={setMemoryText}
+        multiline
+        textAlignVertical="top"
+        maxLength={1000}
+        editable={!isLoading}
+      />
       
-      {/* Input Area */}
-      {inputMethod === 'text' ? (
-        <>
-          <TextInput
-            style={styles.textInput}
-            placeholder="What happened today? How are you feeling? What did you learn?"
-            placeholderTextColor={IOSColors.tertiaryLabel}
-            value={memoryText}
-            onChangeText={setMemoryText}
-            multiline
-            textAlignVertical="top"
-            maxLength={1000}
-          />
-          
-          <View style={styles.characterCount}>
-            <Text style={styles.characterCountText}>
-              {memoryText.length}/1000 characters
-            </Text>
-          </View>
-        </>
-      ) : (
-        <View style={styles.voiceInputContainer}>
-          <VoiceRecorder
-            onTranscriptionComplete={handleVoiceTranscription}
-            onError={handleVoiceError}
-            disabled={isLoading}
-          />
-          {memoryText.length > 0 && (
-            <View style={styles.transcriptionPreview}>
-              <Text style={styles.transcriptionLabel}>Transcribed text:</Text>
-              <Text style={styles.transcriptionText}>{memoryText}</Text>
-            </View>
-          )}
-        </View>
-      )}
+      <View style={styles.characterCount}>
+        <Text style={styles.characterCountText}>
+          {memoryText.length}/1000
+        </Text>
+      </View>
       
       <View style={styles.editorActions}>
         <TouchableOpacity 
@@ -341,6 +292,16 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
         selectedDate={selectedDate}
         onMemoryComplete={handleConversationalMemoryComplete}
         onClose={handleCloseConversationalAssistant}
+      />
+    );
+  }
+
+  if (showVoiceAssistant) {
+    return (
+      <StreamingVoiceAssistant
+        selectedDate={selectedDate}
+        onMemoryComplete={handleVoiceMemoryComplete}
+        onClose={handleCloseVoiceAssistant}
       />
     );
   }
@@ -456,66 +417,59 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
-  // Memory Display Styles
+  // Memory Display Styles - Compact Version
   memoryDisplayContainer: {
-    ...IOSCardStyles.insetGrouped,
     backgroundColor: IOSColors.systemBackground,
+    borderRadius: IOSBorderRadius.lg,
+    padding: IOSSpacing.md,
+    marginHorizontal: IOSSpacing.md,
+    marginBottom: IOSSpacing.sm,
+    shadowColor: IOSColors.label,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
   },
   memoryDisplayHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingBottom: IOSSpacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: IOSColors.separator,
-    marginBottom: IOSSpacing.lg,
+    marginBottom: IOSSpacing.sm,
   },
   memoryStatusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   memoryStatusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: IOSColors.systemGreen,
-    marginRight: IOSSpacing.xs,
+    marginRight: 6,
   },
   memoryStatusText: {
-    ...IOSTypography.subhead,
+    ...IOSTypography.caption2,
     color: IOSColors.systemGreen,
     fontWeight: '600',
+    fontSize: 11,
   },
   editMemoryButton: {
-    paddingVertical: IOSSpacing.sm,
-    paddingHorizontal: IOSSpacing.md,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
     backgroundColor: IOSColors.systemBlue + '15',
-    borderRadius: IOSBorderRadius.md,
+    borderRadius: 6,
   },
   editMemoryButtonText: {
-    ...IOSTypography.subhead,
+    ...IOSTypography.caption2,
     color: IOSColors.systemBlue,
     fontWeight: '600',
-  },
-  memoryDisplayContent: {
-    gap: IOSSpacing.md,
-  },
-  memoryDisplayDate: {
-    ...IOSTypography.caption1,
-    color: IOSColors.secondaryLabel,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    fontWeight: '600',
-  },
-  memoryTextContainer: {
-    backgroundColor: IOSColors.secondarySystemGroupedBackground,
-    padding: IOSSpacing.lg,
-    borderRadius: IOSBorderRadius.lg,
+    fontSize: 11,
   },
   memoryDisplayText: {
-    ...IOSTypography.body,
+    ...IOSTypography.callout,
     color: IOSColors.label,
-    lineHeight: 26,
+    lineHeight: 18,
+    fontSize: 13,
   },
   editorContainer: {
     ...IOSCardStyles.insetGrouped,

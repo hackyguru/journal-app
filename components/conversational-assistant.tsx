@@ -1,9 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { IOSCardStyles, IOSColors, IOSSpacing, IOSTypography, useIOSSafeAreaStyles } from './ui/ios-design-system';
-import VoiceRecorder from './voice-recorder';
 
 interface ConversationalAssistantProps {
   selectedDate: string;
@@ -106,31 +105,6 @@ const ConversationalAssistant: React.FC<ConversationalAssistantProps> = ({
     }
   };
 
-  const handleVoiceTranscription = (transcriptionText: string) => {
-    console.log('Voice transcription received:', transcriptionText);
-    
-    // Add user message
-    addMessage(transcriptionText, true);
-    
-    // Store user response
-    setUserResponses(prev => [...prev, transcriptionText]);
-    
-    // Generate assistant response after a brief pause
-    setTimeout(() => {
-      if (userResponses.length >= 4) {
-        // Conclude conversation
-        finishConversation();
-      } else {
-        const nextPrompt = getNextPrompt();
-        addMessage(nextPrompt, false);
-      }
-    }, 1500);
-  };
-
-  const handleVoiceError = (error: string) => {
-    console.error('Voice recording error:', error);
-    Alert.alert('Voice Recording Error', error);
-  };
 
   const finishConversation = () => {
     const finalMessage = "Thank you for sharing your day with me. I'll save these reflections to your memory.";
@@ -232,13 +206,11 @@ const ConversationalAssistant: React.FC<ConversationalAssistantProps> = ({
         )}
       </ScrollView>
 
-      {/* Voice Recording */}
+      {/* Text Input for Conversation */}
       <View style={styles.controlsContainer}>
-        <VoiceRecorder
-          onTranscriptionComplete={handleVoiceTranscription}
-          onError={handleVoiceError}
-          disabled={isWaitingForResponse}
-        />
+        <Text style={styles.instructionText}>
+          Voice recording has been moved to the main "Record" option for better streaming experience.
+        </Text>
       </View>
     </SafeAreaView>
   );
@@ -368,6 +340,12 @@ const styles = StyleSheet.create({
     color: IOSColors.systemRed,
     textAlign: 'center',
     marginBottom: IOSSpacing.lg,
+  },
+  instructionText: {
+    ...IOSTypography.body,
+    color: IOSColors.secondaryLabel,
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
 });
 

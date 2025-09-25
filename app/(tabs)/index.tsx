@@ -2,32 +2,16 @@ import DailyMemory from '@/components/daily-memory';
 import { IOSBorderRadius, IOSColors, IOSLayoutStyles, IOSSpacing, IOSTypography, useIOSSafeAreaStyles } from '@/components/ui/ios-design-system';
 import WeeklyCalendar from '@/components/weekly-calendar';
 import { usePinecone } from '@/hooks/usePinecone';
+import { getCurrentWeekStart, getTodayLocalDate } from '@/utils/dateUtils';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HomeScreen() {
-  // Fix timezone issue - use local date instead of UTC
-  const getTodayLocalDate = () => {
-    const today = new Date();
-    return today.getFullYear() + '-' + 
-      String(today.getMonth() + 1).padStart(2, '0') + '-' + 
-      String(today.getDate()).padStart(2, '0');
-  };
-  
   const [selectedDate, setSelectedDate] = useState<string>(getTodayLocalDate());
   const [memoryDates, setMemoryDates] = useState<Set<string>>(new Set());
   const { getWeekMemories } = usePinecone();
   const safeAreaStyles = useIOSSafeAreaStyles();
-
-  const getCurrentWeekStart = () => {
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const monday = new Date(today);
-    monday.setDate(today.getDate() + daysToMonday);
-    return monday.toISOString().split('T')[0];
-  };
 
   const loadWeekMemories = async () => {
     const weekStart = getCurrentWeekStart();
