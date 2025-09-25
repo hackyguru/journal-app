@@ -188,7 +188,7 @@ app.post('/api/memories', async (req, res) => {
     const index = pc.index(indexName);
     const dateStr = date; // Already in YYYY-MM-DD format
     
-    // Check if memory already exists for this date
+    // Check how many memories exist for this date (max 5 allowed)
     const namespace = index.namespace('default');
     const existingQuery = await namespace.query({
       topK: 100,
@@ -197,27 +197,25 @@ app.post('/api/memories', async (req, res) => {
       vector: new Array(1024).fill(0.001),
     });
 
-    const existingMemory = existingQuery.matches?.find(match => 
+    const existingMemories = existingQuery.matches?.filter(match => 
       match.metadata?.date === dateStr
-    );
+    ) || [];
 
-    console.log('🔍 Existing memory check:', {
+    console.log('🔍 Existing memories check:', {
       dateStr,
-      totalMatches: existingQuery.matches?.length || 0,
-      allDates: existingQuery.matches?.map(m => m.metadata?.date) || [],
-      existingMemoryFound: !!existingMemory,
-      existingMemoryDate: existingMemory?.metadata?.date
+      existingCount: existingMemories.length,
+      maxAllowed: 5
     });
 
-    if (existingMemory) {
+    if (existingMemories.length >= 5) {
       return res.status(400).json({
-        error: 'Memory already exists for this date',
-        message: 'You can only store one memory per day. Edit or replace the existing memory.',
-        existingMemory: {
-          id: existingMemory.id,
-          text: existingMemory.metadata?.text || '',
-          date: existingMemory.metadata?.date
-        }
+        error: 'Maximum memories reached for this date',
+        message: 'You can only store up to 5 memories per day. Please edit or delete an existing memory.',
+        existingMemories: existingMemories.map(memory => ({
+          id: memory.id,
+          text: memory.metadata?.text || '',
+          date: memory.metadata?.date
+        }))
       });
     }
 
@@ -654,7 +652,7 @@ app.get('/api/memories/week', async (req, res) => {
         weekdayFull: currentDate.toLocaleDateString('en-US', { weekday: 'long' }),
         day: currentDate.getDate(),
         hasMemory: false,
-        memory: null
+        memories: []
       };
     }
 
@@ -663,11 +661,11 @@ app.get('/api/memories/week', async (req, res) => {
       const memoryDate = match.metadata?.date;
       if (memoryDate && weekMemories[memoryDate]) {
         weekMemories[memoryDate].hasMemory = true;
-        weekMemories[memoryDate].memory = {
+        weekMemories[memoryDate].memories.push({
           id: match.id,
           text: match.metadata?.text || '',
           timestamp: match.metadata?.timestamp
-        };
+        });
       }
     });
 
@@ -1154,7 +1152,7 @@ async function startServer() {
             const namespace = index.namespace('default');
             const dateStr = data.date;
             
-            // Check if memory already exists for this date
+            // Check how many memories exist for this date (max 5 allowed)
             const existingQuery = await namespace.query({
               topK: 100,
               includeMetadata: true,
@@ -1162,14 +1160,14 @@ async function startServer() {
               vector: new Array(1024).fill(0.001),
             });
 
-            const existingMemory = existingQuery.matches?.find(match => 
+            const existingMemories = existingQuery.matches?.filter(match => 
               match.metadata?.date === dateStr
-            );
+            ) || [];
 
-            if (existingMemory) {
+            if (existingMemories.length >= 5) {
               ws.send(JSON.stringify({
                 type: 'error',
-                error: 'Memory already exists for this date'
+                error: 'Maximum memories reached for this date. You can only store up to 5 memories per day.'
               }));
               return;
             }

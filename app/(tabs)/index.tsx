@@ -114,8 +114,9 @@ const styles = StyleSheet.create({
     backgroundColor: IOSColors.systemGroupedBackground,
   },
   greeting: {
-    ...IOSTypography.largeTitle,
+    ...IOSTypography.title2,
     marginBottom: 2,
+    fontWeight: '600',
   },
   status: {
     ...IOSTypography.subhead,

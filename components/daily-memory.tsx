@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ConversationalAssistant from './conversational-assistant';
 import StreamingVoiceAssistant from './streaming-voice-assistant';
-import { IOSBorderRadius, IOSButtonStyles, IOSButtonTextStyles, IOSCardStyles, IOSColors, IOSSpacing, IOSTypography } from './ui/ios-design-system';
+import { IOSBorderRadius, IOSCardStyles, IOSColors, IOSSpacing, IOSTypography } from './ui/ios-design-system';
 
 interface DailyMemoryProps {
   selectedDate: string;
@@ -13,8 +13,9 @@ interface DailyMemoryProps {
 
 const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate }) => {
   const [memoryText, setMemoryText] = useState('');
-  const [existingMemory, setExistingMemory] = useState<any>(null);
+  const [existingMemories, setExistingMemories] = useState<any[]>([]);
   const [isEditing, setIsEditing] = useState(false);
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [inputMethod, setInputMethod] = useState<'text' | 'voice' | 'conversation'>('text');
   const [showConversationalAssistant, setShowConversationalAssistant] = useState(false);
   const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
@@ -35,13 +36,37 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
       return;
     }
 
+    if (existingMemories.length >= 5 && !editingMemoryId) {
+      Alert.alert('Maximum Memories Reached', 'You can only store up to 5 memories per day. Please edit or delete an existing memory.');
+      return;
+    }
+
     try {
       const result = await upsertData(memoryText.trim(), { date: selectedDate });
       
       if (result.success) {
         Alert.alert('Success', 'Your memory has been saved!');
-        setExistingMemory({ text: memoryText.trim(), date: selectedDate });
+        
+        if (editingMemoryId) {
+          // Update existing memory
+          setExistingMemories(prev => prev.map(memory => 
+            memory.id === editingMemoryId 
+              ? { ...memory, text: memoryText.trim() }
+              : memory
+          ));
+        } else {
+          // Add new memory
+          const newMemory = { 
+            id: `temp-${Date.now()}`, 
+            text: memoryText.trim(), 
+            date: selectedDate 
+          };
+          setExistingMemories(prev => [...prev, newMemory]);
+        }
+        
         setIsEditing(false);
+        setEditingMemoryId(null);
+        setMemoryText('');
         onMemoryUpdate(true);
       } else {
         Alert.alert('Error', result.error || 'Failed to save memory');
@@ -52,17 +77,19 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     }
   };
 
-  const handleEditMemory = () => {
+  const handleEditMemory = (memory: any) => {
     if (!isTodayDate()) {
       Alert.alert('Cannot Edit', 'You can only edit today\'s memory.');
       return;
     }
     setIsEditing(true);
-    setMemoryText(existingMemory?.text || '');
+    setEditingMemoryId(memory.id);
+    setMemoryText(memory.text || '');
   };
 
   const handleCancelEdit = () => {
     setIsEditing(false);
+    setEditingMemoryId(null);
     setMemoryText('');
     setInputMethod('text');
   };
@@ -77,7 +104,8 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
       
       if (result.success) {
         Alert.alert('Memory Saved!', 'Your conversational memory has been saved successfully.');
-        setExistingMemory({ text: memoryText.trim(), date: selectedDate });
+        const newMemory = { id: `temp-${Date.now()}`, text: memoryText.trim(), date: selectedDate };
+        setExistingMemories(prev => [...prev, newMemory]);
         setIsEditing(false);
         onMemoryUpdate(true);
       } else {
@@ -97,7 +125,8 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     // Just update the UI and show success
     console.log('✅ Voice memory completed:', memoryText);
     Alert.alert('Memory Saved!', 'Your voice memory has been saved successfully.');
-    setExistingMemory({ text: memoryText.trim(), date: selectedDate });
+    const newMemory = { id: `temp-${Date.now()}`, text: memoryText.trim(), date: selectedDate };
+    setExistingMemories(prev => [...prev, newMemory]);
     setIsEditing(false);
     onMemoryUpdate(true);
     
@@ -138,13 +167,17 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
         const result = await response.json();
         if (result.success && result.memories && result.memories[date]) {
           const dayMemory = result.memories[date];
-          if (dayMemory.hasMemory && dayMemory.memory) {
-            setExistingMemory({
-              text: dayMemory.memory.text,
+          if (dayMemory.hasMemory && dayMemory.memories) {
+            setExistingMemories(dayMemory.memories.map((memory: any) => ({
+              text: memory.text,
               date: date,
-              id: dayMemory.memory.id
-            });
+              id: memory.id
+            })));
+          } else {
+            setExistingMemories([]);
           }
+        } else {
+          setExistingMemories([]);
         }
       }
     } catch (error) {
@@ -157,7 +190,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
   // Load existing memory for selected date
   useEffect(() => {
     // Reset state when date changes
-    setExistingMemory(null);
+    setExistingMemories([]);
     setMemoryText('');
     setIsEditing(false);
     setShowConversationalAssistant(false);
@@ -176,10 +209,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
             <View style={styles.pastDateIconContainer}>
               <Text style={styles.pastDateIcon}>📖</Text>
             </View>
-            <Text style={styles.pastDateTitle}>View Only</Text>
-            <Text style={styles.pastDateSubtitle}>
-              No memory was captured on {formatDate()}
-            </Text>
+            <Text style={styles.pastDateTitle}>No memory was captured</Text>
           </View>
         </View>
       );
@@ -219,31 +249,44 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     );
   };
 
-  const renderExistingMemory = () => (
-    <View style={styles.memoryDisplayContainer}>
-      <View style={styles.memoryDisplayHeader}>
-        <View style={styles.memoryStatusContainer}>
-          <View style={styles.memoryStatusDot} />
-          <Text style={styles.memoryStatusText}>Memory</Text>
+  const renderExistingMemories = () => (
+    <View>
+      {existingMemories.map((memory, index) => (
+        <View key={memory.id || index} style={styles.memoryDisplayContainer}>
+          <View style={styles.memoryDisplayHeader}>
+            <View style={styles.memoryStatusContainer}>
+              <View style={styles.memoryStatusDot} />
+              <Text style={styles.memoryStatusText}>Memory {index + 1}</Text>
+            </View>
+            {isTodayDate() && (
+              <TouchableOpacity 
+                style={styles.editMemoryButton}
+                onPress={() => handleEditMemory(memory)}
+              >
+                <Text style={styles.editMemoryButtonText}>Edit</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          
+          <Text style={styles.memoryDisplayText}>{memory.text}</Text>
         </View>
-        {isTodayDate() && (
-          <TouchableOpacity 
-            style={styles.editMemoryButton}
-            onPress={handleEditMemory}
-          >
-            <Text style={styles.editMemoryButtonText}>Edit</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      ))}
       
-      <Text style={styles.memoryDisplayText}>{existingMemory.text}</Text>
+      {isTodayDate() && existingMemories.length < 5 && (
+        <TouchableOpacity 
+          style={styles.addMemoryButton}
+          onPress={() => setIsEditing(true)}
+        >
+          <Text style={styles.addMemoryButtonText}>+ Add Memory ({existingMemories.length}/5)</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 
   const renderEditor = () => (
     <View style={styles.editorContainer}>
       <Text style={styles.editorTitle}>
-        {existingMemory ? 'Edit your memory' : 'Write your memory'}
+        {editingMemoryId ? 'Edit your memory' : 'Write your memory'}
       </Text>
       <Text style={styles.editorSubtitle}>{formatDate()}</Text>
       
@@ -267,18 +310,18 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
       
       <View style={styles.editorActions}>
         <TouchableOpacity 
-          style={[IOSButtonStyles.secondary, styles.actionButton]}
+          style={[styles.cancelButton, styles.actionButton]}
           onPress={handleCancelEdit}
         >
-          <Text style={IOSButtonTextStyles.secondary}>Cancel</Text>
+          <Text style={styles.cancelButtonText}>Cancel</Text>
         </TouchableOpacity>
         
         <TouchableOpacity 
-          style={[IOSButtonStyles.primary, styles.actionButton, isLoading && styles.disabledButton]}
+          style={[styles.saveButton, styles.actionButton, isLoading && styles.disabledButton]}
           onPress={handleSaveMemory}
           disabled={isLoading || memoryText.length === 0}
         >
-          <Text style={IOSButtonTextStyles.primary}>
+          <Text style={styles.saveButtonText}>
             {isLoading ? 'Saving...' : 'Save Memory'}
           </Text>
         </TouchableOpacity>
@@ -317,8 +360,8 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
         </View>
       ) : isEditing 
         ? renderEditor()
-        : existingMemory 
-          ? renderExistingMemory()
+        : existingMemories.length > 0 
+          ? renderExistingMemories()
           : renderEmptyState()
       }
       
@@ -347,27 +390,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pastDateIconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: IOSColors.systemGray5,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: IOSSpacing.lg,
+    marginBottom: IOSSpacing.sm,
   },
   pastDateIcon: {
-    fontSize: 28,
+    fontSize: 18,
   },
   pastDateTitle: {
-    ...IOSTypography.title3,
+    ...IOSTypography.callout,
     color: IOSColors.secondaryLabel,
-    marginBottom: IOSSpacing.xs,
-  },
-  pastDateSubtitle: {
-    ...IOSTypography.subhead,
-    color: IOSColors.tertiaryLabel,
+    fontSize: 13,
     textAlign: 'center',
-    maxWidth: 280,
   },
   
   // Today Empty State Styles - Compact Version
@@ -475,34 +513,40 @@ const styles = StyleSheet.create({
     ...IOSCardStyles.insetGrouped,
   },
   editorTitle: {
-    ...IOSTypography.title2,
-    marginBottom: IOSSpacing.sm,
+    ...IOSTypography.callout,
+    marginBottom: IOSSpacing.xs,
     color: IOSColors.label,
+    fontWeight: '600',
+    fontSize: 14,
   },
   editorSubtitle: {
-    ...IOSTypography.subhead,
+    ...IOSTypography.caption2,
     color: IOSColors.secondaryLabel,
-    marginBottom: IOSSpacing.lg,
+    marginBottom: IOSSpacing.sm,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+    fontSize: 10,
   },
   textInput: {
-    ...IOSTypography.body,
+    ...IOSTypography.callout,
     backgroundColor: IOSColors.tertiarySystemFill,
-    borderRadius: IOSBorderRadius.lg,
-    padding: IOSSpacing.md,
-    minHeight: 120,
+    borderRadius: IOSBorderRadius.md,
+    padding: IOSSpacing.sm,
+    minHeight: 80,
     borderWidth: 1,
     borderColor: IOSColors.separator,
     marginBottom: IOSSpacing.sm,
+    fontSize: 13,
+    lineHeight: 18,
   },
   characterCount: {
     alignItems: 'flex-end',
-    marginBottom: IOSSpacing.lg,
+    marginBottom: IOSSpacing.sm,
   },
   characterCountText: {
-    ...IOSTypography.caption1,
+    ...IOSTypography.caption2,
     color: IOSColors.secondaryLabel,
+    fontSize: 10,
   },
   editorActions: {
     flexDirection: 'row',
@@ -514,6 +558,53 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.6,
+  },
+  // Compact Button Styles
+  cancelButton: {
+    backgroundColor: IOSColors.secondarySystemFill,
+    borderRadius: IOSBorderRadius.sm,
+    paddingVertical: IOSSpacing.xs,
+    paddingHorizontal: IOSSpacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+  },
+  cancelButtonText: {
+    ...IOSTypography.callout,
+    color: IOSColors.label,
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  saveButton: {
+    backgroundColor: IOSColors.systemBlue,
+    borderRadius: IOSBorderRadius.sm,
+    paddingVertical: IOSSpacing.xs,
+    paddingHorizontal: IOSSpacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+  },
+  saveButtonText: {
+    ...IOSTypography.callout,
+    color: IOSColors.systemBackground,
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  // Add Memory Button
+  addMemoryButton: {
+    backgroundColor: IOSColors.systemBlue + '15',
+    borderRadius: IOSBorderRadius.md,
+    paddingVertical: IOSSpacing.sm,
+    paddingHorizontal: IOSSpacing.md,
+    alignItems: 'center',
+    marginTop: IOSSpacing.sm,
+    marginHorizontal: IOSSpacing.md,
+  },
+  addMemoryButtonText: {
+    ...IOSTypography.callout,
+    color: IOSColors.systemBlue,
+    fontWeight: '600',
+    fontSize: 13,
   },
   errorContainer: {
     marginTop: IOSSpacing.md,

@@ -222,8 +222,9 @@ const styles = StyleSheet.create({
     borderColor: IOSColors.separator,
   },
   messageText: {
-    ...IOSTypography.body,
-    lineHeight: 22,
+    ...IOSTypography.callout,
+    fontSize: 13,
+    lineHeight: 18,
   },
   userText: {
     color: IOSColors.systemBackground,
@@ -232,10 +233,11 @@ const styles = StyleSheet.create({
     color: IOSColors.label,
   },
   memoryHint: {
-    ...IOSTypography.caption1,
+    ...IOSTypography.caption2,
     color: IOSColors.systemBlue,
     marginTop: IOSSpacing.xs,
     opacity: 0.8,
+    fontSize: 11,
   },
   // Input Section  
   inputSection: {
@@ -256,9 +258,10 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    ...IOSTypography.body,
+    ...IOSTypography.callout,
     color: IOSColors.label,
     paddingVertical: IOSSpacing.xs,
+    fontSize: 13,
   },
   sendButton: {
     width: 32,
