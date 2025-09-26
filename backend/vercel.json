@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "server-vercel.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/server-vercel.js"
+    }
+  ],
+  "functions": {
+    "server-vercel.js": {
+      "maxDuration": 30
+    }
+  },
+  "env": {
+    "PINECONE_API_KEY": "@pinecone-api-key",
+    "OPENAI_API_KEY": "@openai-api-key",
+    "ASSEMBLYAI_API_KEY": "@assemblyai-api-key"
+  }
+}

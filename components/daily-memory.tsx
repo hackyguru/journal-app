@@ -3,7 +3,7 @@ import { formatDateForDisplay, isToday } from '@/utils/dateUtils';
 import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ConversationalAssistant from './conversational-assistant';
-import StreamingVoiceAssistant from './streaming-voice-assistant';
+import FileUploadVoiceAssistant from './file-upload-voice-assistant';
 import { IOSBorderRadius, IOSCardStyles, IOSColors, IOSSpacing, IOSTypography } from './ui/ios-design-system';
 
 interface DailyMemoryProps {
@@ -121,7 +121,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     setMemoryText(memoryText);
     setShowVoiceAssistant(false);
     
-    // Memory was already saved via WebSocket in the streaming assistant
+    // Memory was already saved by the voice assistant
     // Just update the UI and show success
     console.log('✅ Voice memory completed:', memoryText);
     Alert.alert('Memory Saved!', 'Your voice memory has been saved successfully.');
@@ -341,7 +341,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
 
   if (showVoiceAssistant) {
     return (
-      <StreamingVoiceAssistant
+      <FileUploadVoiceAssistant
         selectedDate={selectedDate}
         onMemoryComplete={handleVoiceMemoryComplete}
         onClose={handleCloseVoiceAssistant}
@@ -377,7 +377,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
 
 const styles = StyleSheet.create({
   container: {
-    margin: IOSSpacing.md,
+    // No margin - individual components now handle their own margins to align with calendar
   },
   
   // Past Date Styles
@@ -385,6 +385,7 @@ const styles = StyleSheet.create({
     ...IOSCardStyles.insetGrouped,
     paddingVertical: IOSSpacing['2xl'],
     backgroundColor: IOSColors.secondarySystemGroupedBackground,
+    paddingHorizontal: IOSSpacing.lg + IOSSpacing.md, // Match calendar's total padding (24+16=40px)
   },
   pastDateContent: {
     alignItems: 'center',
@@ -413,6 +414,7 @@ const styles = StyleSheet.create({
     ...IOSCardStyles.insetGrouped,
     paddingVertical: IOSSpacing.lg,
     backgroundColor: IOSColors.systemBackground,
+    paddingHorizontal: IOSSpacing.lg + IOSSpacing.md, // Match calendar's total padding (24+16=40px)
   },
   compactHeader: {
     alignItems: 'center',
@@ -455,18 +457,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
-  // Memory Display Styles - Compact Version
+  // Memory Display Styles - Match calendar container exactly
   memoryDisplayContainer: {
-    backgroundColor: IOSColors.systemBackground,
-    borderRadius: IOSBorderRadius.lg,
-    padding: IOSSpacing.md,
-    marginHorizontal: IOSSpacing.md,
+    ...IOSCardStyles.insetGrouped, // Same base as calendar
+    marginHorizontal: IOSSpacing.md, // Same override as calendar
+    paddingHorizontal: IOSSpacing.md, // Same additional padding as calendar
+    paddingVertical: IOSSpacing.md, // Custom padding for memory cards
     marginBottom: IOSSpacing.sm,
-    shadowColor: IOSColors.label,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 1,
+    backgroundColor: IOSColors.systemBackground, // Override insetGrouped background
   },
   memoryDisplayHeader: {
     flexDirection: 'row',
@@ -511,6 +509,7 @@ const styles = StyleSheet.create({
   },
   editorContainer: {
     ...IOSCardStyles.insetGrouped,
+    paddingHorizontal: IOSSpacing.lg + IOSSpacing.md, // Match calendar's total padding (24+16=40px)
   },
   editorTitle: {
     ...IOSTypography.callout,
@@ -590,15 +589,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 13,
   },
-  // Add Memory Button
+  // Add Memory Button - Match calendar width
   addMemoryButton: {
+    ...IOSCardStyles.insetGrouped, // Same base as calendar
+    marginHorizontal: IOSSpacing.md, // Same override as calendar
+    paddingHorizontal: IOSSpacing.md, // Same additional padding as calendar
+    paddingVertical: IOSSpacing.sm,
+    marginTop: IOSSpacing.sm,
+    marginBottom: 0,
     backgroundColor: IOSColors.systemBlue + '15',
     borderRadius: IOSBorderRadius.md,
-    paddingVertical: IOSSpacing.sm,
-    paddingHorizontal: IOSSpacing.md,
     alignItems: 'center',
-    marginTop: IOSSpacing.sm,
-    marginHorizontal: IOSSpacing.md,
+    justifyContent: 'center',
   },
   addMemoryButtonText: {
     ...IOSTypography.callout,
@@ -615,9 +617,11 @@ const styles = StyleSheet.create({
     borderColor: IOSColors.systemRed + '30', // 30% opacity
   },
   errorText: {
-    ...IOSTypography.subhead,
+    ...IOSTypography.callout,
     color: IOSColors.systemRed,
     textAlign: 'center',
+    fontSize: 13,
+    lineHeight: 18,
   },
   inputMethodToggle: {
     flexDirection: 'row',
@@ -687,6 +691,7 @@ const styles = StyleSheet.create({
     paddingVertical: IOSSpacing['2xl'],
     minHeight: 200,
     backgroundColor: IOSColors.systemBackground,
+    paddingHorizontal: IOSSpacing.lg + IOSSpacing.md, // Match calendar's total padding (24+16=40px)
   },
   loadingSpinner: {
     marginBottom: IOSSpacing.lg,
@@ -695,9 +700,11 @@ const styles = StyleSheet.create({
     fontSize: 32,
   },
   loadingText: {
-    ...IOSTypography.body,
+    ...IOSTypography.callout,
     color: IOSColors.secondaryLabel,
     textAlign: 'center',
+    fontSize: 13,
+    lineHeight: 18,
   },
   
   // Error Styles  
@@ -714,11 +721,6 @@ const styles = StyleSheet.create({
   errorIcon: {
     fontSize: 20,
     marginRight: IOSSpacing.sm,
-  },
-  errorText: {
-    ...IOSTypography.subhead,
-    color: IOSColors.systemRed,
-    flex: 1,
   },
 });
 
