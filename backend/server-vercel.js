@@ -33,7 +33,7 @@ if (!pineconeApiKey) {
 }
 
 const pc = new Pinecone({ apiKey: pineconeApiKey });
-const indexName = 'memory-index';
+const indexName = 'developer-quickstart-js';
 
 // Initialize OpenAI (optional)
 let openai = null;
@@ -494,3 +494,4 @@ startServer().catch(console.error);
 
 // Export for Vercel
 module.exports = app;
+// Force redeploy Fri Sep 26 12:19:25 BST 2025
