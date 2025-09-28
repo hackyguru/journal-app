@@ -84,12 +84,19 @@ app.get('/health', (req, res) => {
 // Store memory endpoint
 app.post('/api/memories', async (req, res) => {
   try {
-    const { text, date, metadata } = req.body;
+    const { text, date, metadata, userId } = req.body;
     
     if (!text) {
       return res.status(400).json({ 
         success: false,
         error: 'Text is required' 
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'User ID is required' 
       });
     }
 
@@ -121,17 +128,19 @@ app.post('/api/memories', async (req, res) => {
     const index = pc.index(indexName);
     const namespace = index.namespace('default');
     
-    // Check how many memories exist for this date (max 5 allowed)
+    // Check how many memories exist for this user and date (max 5 allowed)
     const existingQuery = await namespace.query({
       topK: 100,
       includeMetadata: true,
       includeValues: false,
       vector: new Array(1024).fill(0.001),
+      filter: {
+        userId: userId,
+        date: dateStr
+      }
     });
 
-    const existingMemories = existingQuery.matches?.filter(match => 
-      match.metadata?.date === dateStr
-    ) || [];
+    const existingMemories = existingQuery.matches || [];
 
     if (existingMemories.length >= 5) {
       return res.status(400).json({
@@ -140,26 +149,25 @@ app.post('/api/memories', async (req, res) => {
       });
     }
 
-    // Generate unique ID for this memory
-    const id = `memory-${dateStr}-${Math.random().toString(36).substr(2, 9)}`;
+    // Generate unique ID for this memory (include userId for better organization)
+    const id = `memory-${userId}-${dateStr}-${Math.random().toString(36).substr(2, 9)}`;
     
     // Calculate weekday
     const weekday = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' });
     
-    // Prepare metadata
-    const memoryMetadata = {
-      text: text,
+    // Note: For Pinecone integrated embeddings, metadata must be individual fields, not nested objects
+
+    // Store in Pinecone with integrated embeddings
+    // The 'text' field must be at root level for embeddings
+    // Metadata fields must be individual properties, not nested objects
+    await namespace.upsertRecords([{
+      id: id,
+      text: text,  // 🔑 Root level text field for embeddings
+      userId: userId,           // Individual metadata fields
       date: dateStr,
       timestamp: new Date().toISOString(),
       weekday: weekday,
-      source: metadata?.source || 'text_input',
-      ...metadata
-    };
-
-    // Store in Pinecone with integrated embeddings
-    await namespace.upsertRecords([{
-      id: id,
-      metadata: memoryMetadata
+      source: metadata?.source || 'text_input'
     }]);
 
     console.log(`✅ Memory stored successfully with ID: ${id}`);
@@ -184,32 +192,47 @@ app.post('/api/memories', async (req, res) => {
 // Search memories endpoint
 app.post('/api/memories/search', async (req, res) => {
   try {
-    const { query, maxResults = 10 } = req.body;
+    const { query, maxResults = 10, userId } = req.body;
     
     if (!query) {
       return res.status(400).json({ error: 'Query is required' });
     }
 
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+
     const index = pc.index(indexName);
     const namespace = index.namespace('default');
     
-    // Perform semantic search using integrated embeddings
+    // Get all user memories and do text matching
     const searchResults = await namespace.query({
-      data: query,
-      topK: maxResults,
+      vector: new Array(1024).fill(0.001),
+      topK: 1000,
       includeMetadata: true,
-      includeValues: false
+      includeValues: false,
+      filter: {
+        userId: userId  // 🔑 Only search this user's memories
+      }
     });
 
-    const memories = searchResults.matches?.map(match => ({
+    // Filter results by text similarity (simple text matching for now)
+    const filteredMatches = searchResults.matches?.filter(match => 
+      match.text?.toLowerCase().includes(query.toLowerCase())
+    ) || [];
+
+    // Limit to requested number of results
+    const limitedMatches = filteredMatches.slice(0, maxResults);
+
+    const memories = limitedMatches.map(match => ({
       id: match.id,
-      text: match.metadata?.text || '',
-      date: match.metadata?.date || '',
-      timestamp: match.metadata?.timestamp || '',
-      weekday: match.metadata?.weekday || '',
+      text: match.text || '',              // Direct field access
+      date: match.date || '',              // Direct field access
+      timestamp: match.timestamp || '',    // Direct field access
+      weekday: match.weekday || '',        // Direct field access
       score: match.score || 0,
-      source: match.metadata?.source || 'unknown'
-    })) || [];
+      source: match.source || 'unknown'    // Direct field access
+    }));
 
     res.json({
       success: true,
@@ -231,7 +254,7 @@ app.post('/api/memories/search', async (req, res) => {
 // Get memories for a week endpoint
 app.get('/api/memories/week', async (req, res) => {
   try {
-    const { startDate } = req.query;
+    const { startDate, userId } = req.query;
     
     if (!startDate || !isValidDateFormat(startDate)) {
       return res.status(400).json({ 
@@ -240,15 +263,25 @@ app.get('/api/memories/week', async (req, res) => {
       });
     }
 
+    if (!userId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'User ID is required' 
+      });
+    }
+
     const index = pc.index(indexName);
     const namespace = index.namespace('default');
     
-    // Get all memories and filter by date range
+    // Get all memories for this user by querying with a dummy vector
     const allMemoriesQuery = await namespace.query({
+      vector: new Array(1024).fill(0.001),
       topK: 1000,
       includeMetadata: true,
       includeValues: false,
-      vector: new Array(1024).fill(0.001),
+      filter: {
+        userId: userId  // 🔑 Only get this user's memories
+      }
     });
 
     // Calculate the week date range
@@ -270,15 +303,15 @@ app.get('/api/memories/week', async (req, res) => {
     // Filter and organize memories by date
     if (allMemoriesQuery.matches) {
       allMemoriesQuery.matches.forEach(match => {
-        const memoryDate = match.metadata?.date;
+        const memoryDate = match.date;  // Direct field access
         if (memoryDate && weekMemories[memoryDate]) {
           weekMemories[memoryDate].hasMemory = true;
-          weekMemories[memoryDate].memories.push({ // Changed to push to memories array
+          weekMemories[memoryDate].memories.push({
             id: match.id,
-            text: match.metadata?.text || '',
-            timestamp: match.metadata?.timestamp || '',
-            weekday: match.metadata?.weekday || '',
-            source: match.metadata?.source || 'unknown'
+            text: match.text || '',              // Direct field access
+            timestamp: match.timestamp || '',    // Direct field access
+            weekday: match.weekday || '',        // Direct field access
+            source: match.source || 'unknown'    // Direct field access
           });
         }
       });
@@ -361,9 +394,13 @@ app.post('/api/transcribe-file', upload.single('audio'), async (req, res) => {
 // Conversational RAG endpoint - Ask questions about your memories
 app.post('/api/chat', async (req, res) => {
   try {
-    const { question, maxMemories = 5 } = req.body;
+    const { question, maxMemories = 5, userId } = req.body;
     if (!question) {
       return res.status(400).json({ error: 'Question is required' });
+    }
+
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
     }
 
     // Check if OpenAI is available
@@ -376,27 +413,67 @@ app.post('/api/chat', async (req, res) => {
     const index = pc.index(indexName);
     const namespace = index.namespace('default');
     
-    // Search for relevant memories using integrated embeddings
+    // Search for relevant memories (simplified text matching for now)
     const searchResults = await namespace.query({
-      data: question,
-      topK: maxMemories,
+      vector: new Array(1024).fill(0.001),
+      topK: 100,
       includeMetadata: true,
-      includeValues: false
+      includeValues: false,
+      filter: {
+        userId: userId  // 🔑 Only search this user's memories
+      }
     });
 
-    const relevantMemories = searchResults.matches?.map(match => ({
-      text: match.metadata?.text || '',
-      date: match.metadata?.date || '',
-      weekday: match.metadata?.weekday || '',
+    // More flexible search - split question into keywords and match any
+    const questionWords = question.toLowerCase().split(/\s+/).filter(word => word.length > 2);
+    
+    let filteredMatches = [];
+    
+    if (questionWords.length === 0) {
+      // If no meaningful keywords, return all memories (limited)
+      filteredMatches = searchResults.matches?.slice(0, maxMemories) || [];
+    } else {
+      // Score matches based on keyword overlap
+      const scoredMatches = searchResults.matches?.map(match => {
+        const memoryText = (match.text || match.metadata?.text || '').toLowerCase();
+        const matchCount = questionWords.filter(word => memoryText.includes(word)).length;
+        const score = matchCount / questionWords.length; // Percentage of keywords matched
+        
+        return { ...match, searchScore: score };
+      }).filter(match => match.searchScore > 0) || []; // Only include matches with at least one keyword
+      
+      // Sort by search score (highest first) and limit results
+      filteredMatches = scoredMatches
+        .sort((a, b) => b.searchScore - a.searchScore)
+        .slice(0, maxMemories);
+    }
+    
+    // If still no matches, return recent memories as fallback
+    if (filteredMatches.length === 0) {
+      filteredMatches = searchResults.matches?.slice(0, Math.min(3, maxMemories)) || [];
+    }
+
+    const relevantMemories = filteredMatches.map(match => ({
+      text: match.text || match.metadata?.text || '',              // Try both direct and metadata access
+      date: match.date || match.metadata?.date || '',              // Try both direct and metadata access
+      weekday: match.weekday || match.metadata?.weekday || '',     // Try both direct and metadata access
       score: match.score || 0
-    })) || [];
+    }));
 
     if (relevantMemories.length === 0) {
+      // Check if user has ANY memories at all
+      const totalMemories = searchResults.matches?.length || 0;
+      
+      const noMemoriesMessage = totalMemories === 0 
+        ? "You haven't recorded any memories yet. Start by adding some memories about your day, and then I'll be able to answer questions about them!"
+        : `I couldn't find memories that match your question. You have ${totalMemories} memories total. Try asking more general questions like "What did I do recently?" or "Tell me about my memories."`;
+      
       return res.json({
         success: true,
-        answer: "I couldn't find any relevant memories to answer your question. Try asking about something you've recorded before.",
+        answer: noMemoriesMessage,
         relevantMemories: [],
-        question: question
+        question: question,
+        totalMemories: totalMemories
       });
     }
 

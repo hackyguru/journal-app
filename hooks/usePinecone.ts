@@ -1,16 +1,14 @@
+import { useAuth } from '@/contexts/AuthContext';
 import { getTodayLocalDate } from '@/utils/dateUtils';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useState } from 'react';
 
 // Backend API configuration
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:3001';
-const STORAGE_KEY = 'pinecone-memories';
-
-// No longer needed - backend handles embeddings with proper Pinecone SDK
 
 export const usePinecone = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
 
   const initializeIndex = useCallback(async () => {
     try {
@@ -45,8 +43,16 @@ export const usePinecone = () => {
       setIsLoading(true);
       setError(null);
 
-      // For daily memories, include today's date
-      const requestBody: any = { text };
+      // Ensure user is authenticated
+      if (!user?.id) {
+        throw new Error('User must be authenticated to save memories');
+      }
+
+      // For daily memories, include today's date and userId
+      const requestBody: any = { 
+        text,
+        userId: user.id  // 🔑 Include user ID for isolation
+      };
       
       if (metadata?.date) {
         requestBody.date = metadata.date;
@@ -74,18 +80,6 @@ export const usePinecone = () => {
       }
 
       const result = await response.json();
-      console.log('Memory stored via backend:', result);
-      
-      // Also store locally as backup
-      const existingData = await AsyncStorage.getItem(STORAGE_KEY);
-      const existingMemories = existingData ? JSON.parse(existingData) : [];
-      existingMemories.push({ 
-        id: result.id, 
-        text,
-        date: result.date,
-        timestamp: new Date().toISOString() 
-      });
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(existingMemories));
       
       return { success: true, id: result.id, date: result.date };
     } catch (err) {
@@ -96,12 +90,17 @@ export const usePinecone = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [user]);
 
   const queryData = useCallback(async (queryText: string, topK: number = 5) => {
     try {
       setIsLoading(true);
       setError(null);
+
+      // Ensure user is authenticated
+      if (!user?.id) {
+        throw new Error('User must be authenticated to search memories');
+      }
 
       // Call backend API to search memories
       const response = await fetch(`${BACKEND_URL}/api/memories/search`, {
@@ -111,7 +110,8 @@ export const usePinecone = () => {
         },
         body: JSON.stringify({
           query: queryText,
-          topK,
+          maxResults: topK,
+          userId: user.id  // 🔑 Include user ID for isolation
         }),
       });
 
@@ -132,12 +132,21 @@ export const usePinecone = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [user]);
 
-  const askQuestion = useCallback(async (question: string, maxMemories: number = 5) => {
+  const askQuestion = useCallback(async (
+    question: string, 
+    maxMemories: number = 5, 
+    dateRange?: { startDate?: string; endDate?: string }
+  ) => {
     try {
       setIsLoading(true);
       setError(null);
+
+      // Ensure user is authenticated
+      if (!user?.id) {
+        throw new Error('User must be authenticated to ask questions');
+      }
 
       // Call backend API for conversational chat
       const response = await fetch(`${BACKEND_URL}/api/chat`, {
@@ -148,6 +157,9 @@ export const usePinecone = () => {
         body: JSON.stringify({
           question,
           maxMemories,
+          userId: user.id,  // 🔑 Include user ID for isolation
+          startDate: dateRange?.startDate,  // 📅 Include date range filtering
+          endDate: dateRange?.endDate
         }),
       });
 
@@ -174,7 +186,7 @@ export const usePinecone = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [user]);
 
 
   const getWeekMemories = useCallback(async (startDate: string) => {
@@ -182,8 +194,15 @@ export const usePinecone = () => {
       setIsLoading(true);
       setError(null);
 
+      // Ensure user is authenticated
+      if (!user?.id) {
+        throw new Error('User must be authenticated to get memories');
+      }
+
       // Call backend API to get week memories
-      const response = await fetch(`${BACKEND_URL}/api/memories/week?startDate=${startDate}`, {
+      const url = `${BACKEND_URL}/api/memories/week?startDate=${startDate}&userId=${user.id}`;
+      console.log('🌐 Fetching from URL:', url);
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -205,7 +224,99 @@ export const usePinecone = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [user]);
+
+  const deleteMemory = useCallback(async (memoryId: string) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      if (!user?.id) {
+        throw new Error('User must be authenticated to delete memories');
+      }
+
+      console.log('🗑️ Deleting memory:', memoryId);
+
+      const response = await fetch(`${BACKEND_URL}/api/memories/${memoryId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.id
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to delete memory: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        console.log('✅ Memory deleted successfully');
+        return { success: true, message: result.message };
+      } else {
+        throw new Error(result.error || 'Failed to delete memory');
+      }
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete memory';
+      console.error('Delete memory error:', errorMessage);
+      setError(errorMessage);
+      return { success: false, error: errorMessage };
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user]);
+
+  const updateMemory = useCallback(async (memoryId: string, text: string, title?: string) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      if (!user?.id) {
+        throw new Error('User must be authenticated to update memories');
+      }
+
+      console.log('📝 Updating memory:', memoryId);
+
+      const response = await fetch(`${BACKEND_URL}/api/memories/${memoryId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text,
+          title,
+          userId: user.id
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to update memory: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        console.log('✅ Memory updated successfully');
+        return { success: true, title: result.title, message: result.message };
+      } else {
+        throw new Error(result.error || 'Failed to update memory');
+      }
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update memory';
+      console.error('Update memory error:', errorMessage);
+      setError(errorMessage);
+      return { success: false, error: errorMessage };
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user]);
 
   return {
     isLoading,
@@ -215,5 +326,7 @@ export const usePinecone = () => {
     queryData,
     askQuestion,
     getWeekMemories,
+    deleteMemory,
+    updateMemory,
   };
 };

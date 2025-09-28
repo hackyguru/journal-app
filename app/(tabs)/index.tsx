@@ -16,17 +16,37 @@ export default function HomeScreen() {
   const safeAreaStyles = useIOSSafeAreaStyles();
 
   const loadWeekMemories = async () => {
-    const weekStart = getCurrentWeekStart();
-    const result = await getWeekMemories(weekStart);
-    
-    if (result.success) {
-      const dates = new Set<string>();
-      Object.values(result.memories).forEach((day: any) => {
-        if (day.hasMemory) {
-          dates.add(day.date);
-        }
-      });
-      setMemoryDates(dates);
+    try {
+      // Don't load if user is not authenticated
+      if (!user?.id) {
+        console.log('No user authenticated, skipping week memories load');
+        setMemoryDates(new Set());
+        return;
+      }
+
+      const weekStart = getCurrentWeekStart();
+      console.log('Loading week memories for user:', user.id, 'week start:', weekStart);
+      const result = await getWeekMemories(weekStart);
+      
+      if (result.success) {
+        console.log('Week memories result:', JSON.stringify(result, null, 2));
+        const dates = new Set<string>();
+        Object.entries(result.memories).forEach(([date, day]: [string, any]) => {
+          console.log(`Processing date ${date}:`, day.hasMemory ? 'HAS MEMORY' : 'NO MEMORY');
+          if (day.hasMemory) {
+            dates.add(day.date);
+            console.log(`Added date to set: ${day.date}`);
+          }
+        });
+        console.log('Final memory dates:', Array.from(dates));
+        setMemoryDates(dates);
+      } else {
+        console.error('Failed to load week memories:', result.error);
+        setMemoryDates(new Set());
+      }
+    } catch (error) {
+      console.error('Error loading week memories:', error);
+      setMemoryDates(new Set());
     }
   };
 
@@ -34,7 +54,7 @@ export default function HomeScreen() {
     loadWeekMemories();
     // Ensure today is selected when app loads
     setSelectedDate(getTodayLocalDate());
-  }, []);
+  }, [user]);
 
   const handleDateSelect = (date: string) => {
     setSelectedDate(date);

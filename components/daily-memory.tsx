@@ -1,5 +1,7 @@
+import { useAuth } from '@/contexts/AuthContext';
 import { usePinecone } from '@/hooks/usePinecone';
 import { formatDateForDisplay, isToday } from '@/utils/dateUtils';
+import { getSentimentEmoji } from '@/utils/sentimentUtils';
 import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ConversationalAssistant from './conversational-assistant';
@@ -13,14 +15,16 @@ interface DailyMemoryProps {
 
 const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate }) => {
   const [memoryText, setMemoryText] = useState('');
+  const [memoryTitle, setMemoryTitle] = useState('');
   const [existingMemories, setExistingMemories] = useState<any[]>([]);
+  const [expandedMemoryId, setExpandedMemoryId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
-  const [inputMethod, setInputMethod] = useState<'text' | 'voice' | 'conversation'>('text');
   const [showConversationalAssistant, setShowConversationalAssistant] = useState(false);
   const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
   const [isLoadingMemory, setIsLoadingMemory] = useState(false);
-  const { upsertData, isLoading, error } = usePinecone();
+  const { user } = useAuth();
+  const { upsertData, deleteMemory, updateMemory, isLoading, error } = usePinecone();
 
   const isTodayDate = () => isToday(selectedDate);
   const formatDate = () => formatDateForDisplay(selectedDate);
@@ -42,7 +46,15 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     }
 
     try {
-      const result = await upsertData(memoryText.trim(), { date: selectedDate });
+      let result;
+      
+      if (editingMemoryId) {
+        // Update existing memory
+        result = await updateMemory(editingMemoryId, memoryText.trim(), memoryTitle.trim());
+      } else {
+        // Create new memory
+        result = await upsertData(memoryText.trim(), { date: selectedDate });
+      }
       
       if (result.success) {
         Alert.alert('Success', 'Your memory has been saved!');
@@ -51,14 +63,15 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
           // Update existing memory
           setExistingMemories(prev => prev.map(memory => 
             memory.id === editingMemoryId 
-              ? { ...memory, text: memoryText.trim() }
+              ? { ...memory, text: memoryText.trim(), title: result.title || memoryTitle.trim() }
               : memory
           ));
         } else {
           // Add new memory
           const newMemory = { 
-            id: `temp-${Date.now()}`, 
-            text: memoryText.trim(), 
+            id: result.id || `temp-${Date.now()}`, 
+            text: memoryText.trim(),
+            title: result.title || 'Untitled Memory',
             date: selectedDate 
           };
           setExistingMemories(prev => [...prev, newMemory]);
@@ -67,13 +80,33 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
         setIsEditing(false);
         setEditingMemoryId(null);
         setMemoryText('');
+        setMemoryTitle('');
         onMemoryUpdate(true);
       } else {
-        Alert.alert('Error', result.error || 'Failed to save memory');
+        // Handle specific error cases with user-friendly messages
+        if (result.error && result.error.includes('Maximum memories reached')) {
+          Alert.alert(
+            'Memory Limit Reached',
+            'You can only store up to 5 memories per day. Please edit or delete an existing memory to add a new one.',
+            [{ text: 'OK' }]
+          );
+        } else {
+          Alert.alert('Error', result.error || 'Failed to save memory');
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving memory:', err);
-      Alert.alert('Error', 'Failed to save memory');
+      
+      // Handle specific error cases with user-friendly messages
+      if (err.message && err.message.includes('Maximum memories reached')) {
+        Alert.alert(
+          'Memory Limit Reached',
+          'You can only store up to 5 memories per day. Please edit or delete an existing memory to add a new one.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('Error', 'Failed to save memory');
+      }
     }
   };
 
@@ -85,13 +118,54 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     setIsEditing(true);
     setEditingMemoryId(memory.id);
     setMemoryText(memory.text || '');
+    setMemoryTitle(memory.title || '');
   };
 
   const handleCancelEdit = () => {
     setIsEditing(false);
     setEditingMemoryId(null);
     setMemoryText('');
-    setInputMethod('text');
+    setMemoryTitle('');
+  };
+
+  const handleDeleteMemory = (memory: any) => {
+    if (!isTodayDate()) {
+      Alert.alert('Cannot Delete', 'You can only delete today\'s memories.');
+      return;
+    }
+
+    Alert.alert(
+      'Delete Memory',
+      'Are you sure you want to delete this memory? This action cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const result = await deleteMemory(memory.id);
+              
+              if (result.success) {
+                Alert.alert('Success', 'Memory deleted successfully');
+                // Remove the memory from local state
+                setExistingMemories(prev => prev.filter(m => m.id !== memory.id));
+                // Update parent component
+                onMemoryUpdate(existingMemories.length > 1);
+              } else {
+                Alert.alert('Error', result.error || 'Failed to delete memory');
+              }
+            } catch (err) {
+              console.error('Error deleting memory:', err);
+              Alert.alert('Error', 'Failed to delete memory');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleConversationalMemoryComplete = async (memoryText: string) => {
@@ -109,11 +183,30 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
         setIsEditing(false);
         onMemoryUpdate(true);
       } else {
-        Alert.alert('Error', result.error || 'Failed to save memory');
+        // Handle specific error cases with user-friendly messages
+        if (result.error && result.error.includes('Maximum memories reached')) {
+          Alert.alert(
+            'Memory Limit Reached',
+            'You can only store up to 5 memories per day. Please edit or delete an existing memory to add a new one.',
+            [{ text: 'OK' }]
+          );
+        } else {
+          Alert.alert('Error', result.error || 'Failed to save memory');
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving conversational memory:', err);
-      Alert.alert('Error', 'Failed to save memory');
+      
+      // Handle specific error cases with user-friendly messages
+      if (err.message && err.message.includes('Maximum memories reached')) {
+        Alert.alert(
+          'Memory Limit Reached',
+          'You can only store up to 5 memories per day. Please edit or delete an existing memory to add a new one.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('Error', 'Failed to save memory');
+      }
     }
   };
 
@@ -152,11 +245,19 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
   const loadExistingMemory = async (date: string) => {
     setIsLoadingMemory(true);
     try {
+      // Ensure user is authenticated
+      if (!user?.id) {
+        console.log('No user authenticated, skipping memory load');
+        setExistingMemories([]);
+        setIsLoadingMemory(false);
+        return;
+      }
+
       // Use the same approach as the week endpoint - get all memories with metadata
       const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:3001';
       
       // Create a single-day week request to get the memory for this specific date
-      const response = await fetch(`${backendUrl}/api/memories/week?startDate=${date}`, {
+      const response = await fetch(`${backendUrl}/api/memories/week?startDate=${date}&userId=${user.id}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -168,11 +269,14 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
         if (result.success && result.memories && result.memories[date]) {
           const dayMemory = result.memories[date];
           if (dayMemory.hasMemory && dayMemory.memories) {
-            setExistingMemories(dayMemory.memories.map((memory: any) => ({
-              text: memory.text,
-              date: date,
-              id: memory.id
-            })));
+                setExistingMemories(dayMemory.memories.map((memory: any) => ({
+                  text: memory.text,
+                  title: memory.title || 'Untitled Memory',  // 📝 Include title with fallback
+                  date: date,
+                  id: memory.id,
+                  sentiment: memory.sentiment,           // 🎭 Include sentiment data
+                  sentimentConfidence: memory.sentimentConfidence // 🎭 Include sentiment confidence
+                })));
           } else {
             setExistingMemories([]);
           }
@@ -198,7 +302,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
 
     // Load existing memory for the selected date
     loadExistingMemory(selectedDate);
-  }, [selectedDate]);
+  }, [selectedDate, user]);
 
   const renderEmptyState = () => {
     if (!isTodayDate()) {
@@ -252,33 +356,75 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
   const renderExistingMemories = () => (
     <View>
       {existingMemories.map((memory, index) => (
-        <View key={memory.id || index} style={styles.memoryDisplayContainer}>
-          <View style={styles.memoryDisplayHeader}>
-            <View style={styles.memoryStatusContainer}>
+        <View key={memory.id || index} style={styles.memoryCard}>
+          <TouchableOpacity 
+            style={styles.memoryCardHeader}
+            onPress={() => setExpandedMemoryId(expandedMemoryId === memory.id ? null : memory.id)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.memoryHeaderLeft}>
               <View style={styles.memoryStatusDot} />
-              <Text style={styles.memoryStatusText}>Memory {index + 1}</Text>
+              <Text style={styles.memoryTitle} numberOfLines={expandedMemoryId === memory.id ? undefined : 2}>
+                {memory.title}
+              </Text>
+              {memory.sentiment && (
+                <Text style={styles.sentimentEmoji}>
+                  {getSentimentEmoji(memory.sentiment)}
+                </Text>
+              )}
             </View>
-            {isTodayDate() && (
-              <TouchableOpacity 
-                style={styles.editMemoryButton}
-                onPress={() => handleEditMemory(memory)}
-              >
-                <Text style={styles.editMemoryButtonText}>Edit</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+            <Text style={styles.expandIcon}>
+              {expandedMemoryId === memory.id ? '▼' : '▶'}
+            </Text>
+          </TouchableOpacity>
           
-          <Text style={styles.memoryDisplayText}>{memory.text}</Text>
+          {expandedMemoryId === memory.id && (
+            <View style={styles.memoryExpandedContent}>
+              <Text style={styles.memoryDisplayText}>{memory.text}</Text>
+              {isTodayDate() && (
+                <View style={styles.memoryActions}>
+                  <TouchableOpacity 
+                    style={styles.editMemoryButton}
+                    onPress={() => handleEditMemory(memory)}
+                  >
+                    <Text style={styles.editMemoryButtonText}>Edit</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={styles.deleteMemoryButton}
+                    onPress={() => handleDeleteMemory(memory)}
+                  >
+                    <Text style={styles.deleteMemoryButtonText}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
         </View>
       ))}
       
-      {isTodayDate() && existingMemories.length < 5 && (
-        <TouchableOpacity 
-          style={styles.addMemoryButton}
-          onPress={() => setIsEditing(true)}
-        >
-          <Text style={styles.addMemoryButtonText}>+ Add Memory ({existingMemories.length}/5)</Text>
-        </TouchableOpacity>
+      {isTodayDate() && existingMemories.length < 5 && !isEditing && (
+        <View style={styles.addMemorySection}>
+          <Text style={styles.addMemoryTitle}>Add Memory ({existingMemories.length}/5)</Text>
+          
+          <View style={styles.compactOptions}>
+            <TouchableOpacity 
+              style={styles.compactOption}
+              onPress={() => setIsEditing(true)}
+            >
+              <Text style={styles.compactOptionIcon}>✍️</Text>
+              <Text style={styles.compactOptionText}>Write</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.compactOption}
+              onPress={() => setShowVoiceAssistant(true)}
+            >
+              <Text style={styles.compactOptionIcon}>🎤</Text>
+              <Text style={styles.compactOptionText}>Record</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
     </View>
   );
@@ -289,6 +435,16 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
         {editingMemoryId ? 'Edit your memory' : 'Write your memory'}
       </Text>
       <Text style={styles.editorSubtitle}>{formatDate()}</Text>
+      
+      <TextInput
+        style={styles.titleInput}
+        placeholder="Memory title (optional - AI will generate if empty)"
+        placeholderTextColor={IOSColors.tertiaryLabel}
+        value={memoryTitle}
+        onChangeText={setMemoryTitle}
+        maxLength={50}
+        editable={!isLoading}
+      />
       
       <TextInput
         style={styles.textInput}
@@ -457,24 +613,50 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
-  // Memory Display Styles - Match calendar container exactly
-  memoryDisplayContainer: {
-    ...IOSCardStyles.insetGrouped, // Same base as calendar
-    marginHorizontal: IOSSpacing.md, // Same override as calendar
-    paddingHorizontal: IOSSpacing.md, // Same additional padding as calendar
-    paddingVertical: IOSSpacing.md, // Custom padding for memory cards
+  // Memory Card Styles - Expandable cards with titles
+  memoryCard: {
+    ...IOSCardStyles.insetGrouped,
+    marginHorizontal: IOSSpacing.md,
     marginBottom: IOSSpacing.sm,
-    backgroundColor: IOSColors.systemBackground, // Override insetGrouped background
+    backgroundColor: IOSColors.systemBackground,
+    borderRadius: IOSBorderRadius.md,
+    overflow: 'hidden',
   },
-  memoryDisplayHeader: {
+  
+  memoryCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: IOSSpacing.sm,
+    paddingHorizontal: IOSSpacing.md,
+    paddingVertical: IOSSpacing.md,
   },
-  memoryStatusContainer: {
+  
+  memoryHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: IOSSpacing.sm,
+  },
+  
+  memoryTitle: {
+    ...IOSTypography.body,
+    color: IOSColors.label,
+    fontWeight: '600',
+    flex: 1,
+    marginLeft: IOSSpacing.sm,
+  },
+  
+  expandIcon: {
+    ...IOSTypography.caption1,
+    color: IOSColors.tertiaryLabel,
+    fontWeight: '600',
+  },
+  
+  memoryExpandedContent: {
+    paddingHorizontal: IOSSpacing.md,
+    paddingBottom: IOSSpacing.md,
+    borderTopWidth: 1,
+    borderTopColor: IOSColors.separator,
   },
   memoryStatusDot: {
     width: 4,
@@ -489,6 +671,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 11,
   },
+  
+  sentimentEmoji: {
+    fontSize: 16,
+    marginLeft: IOSSpacing.xs,
+  },
+  
+  memoryActions: {
+    flexDirection: 'row',
+    gap: IOSSpacing.xs,
+  },
+  
   editMemoryButton: {
     paddingVertical: 4,
     paddingHorizontal: 8,
@@ -498,6 +691,19 @@ const styles = StyleSheet.create({
   editMemoryButtonText: {
     ...IOSTypography.caption2,
     color: IOSColors.systemBlue,
+    fontWeight: '600',
+    fontSize: 11,
+  },
+  
+  deleteMemoryButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: IOSColors.systemRed + '15',
+    borderRadius: 6,
+  },
+  deleteMemoryButtonText: {
+    ...IOSTypography.caption2,
+    color: IOSColors.systemRed,
     fontWeight: '600',
     fontSize: 11,
   },
@@ -526,6 +732,19 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
     fontSize: 10,
   },
+  titleInput: {
+    ...IOSTypography.body,
+    backgroundColor: IOSColors.tertiarySystemFill,
+    borderRadius: IOSBorderRadius.md,
+    padding: IOSSpacing.sm,
+    borderWidth: 1,
+    borderColor: IOSColors.separator,
+    marginBottom: IOSSpacing.sm,
+    fontSize: 15,
+    fontWeight: '600',
+    color: IOSColors.label,
+  },
+  
   textInput: {
     ...IOSTypography.callout,
     backgroundColor: IOSColors.tertiarySystemFill,
@@ -589,24 +808,23 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 13,
   },
-  // Add Memory Button - Match calendar width
-  addMemoryButton: {
+  // Add Memory Section - Match calendar width
+  addMemorySection: {
     ...IOSCardStyles.insetGrouped, // Same base as calendar
     marginHorizontal: IOSSpacing.md, // Same override as calendar
     paddingHorizontal: IOSSpacing.md, // Same additional padding as calendar
-    paddingVertical: IOSSpacing.sm,
+    paddingVertical: IOSSpacing.md,
     marginTop: IOSSpacing.sm,
     marginBottom: 0,
-    backgroundColor: IOSColors.systemBlue + '15',
+    backgroundColor: IOSColors.secondarySystemGroupedBackground,
     borderRadius: IOSBorderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  addMemoryButtonText: {
-    ...IOSTypography.callout,
-    color: IOSColors.systemBlue,
+  addMemoryTitle: {
+    ...IOSTypography.subhead,
+    color: IOSColors.label,
     fontWeight: '600',
-    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: IOSSpacing.sm,
   },
   errorContainer: {
     marginTop: IOSSpacing.md,

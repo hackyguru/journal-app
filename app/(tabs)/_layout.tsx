@@ -21,6 +21,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="todos"
+        options={{
+          title: 'Tasks',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="checklist" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="chat"
         options={{
           title: 'Chat',

@@ -1,4 +1,6 @@
+import { useAuth } from '@/contexts/AuthContext';
 import { usePinecone } from '@/hooks/usePinecone';
+import { getTodayLocalDate } from '@/utils/dateUtils';
 import React, { useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { IOSBorderRadius, IOSColors, IOSSpacing, IOSTypography } from './ui/ios-design-system';
@@ -11,17 +13,83 @@ interface ChatMessage {
   memoriesUsed?: number;
 }
 
+type DateRangePreset = 'all' | 'last7' | 'last30' | 'thisMonth' | 'lastMonth' | 'custom';
+
 const MemoryChat: React.FC = () => {
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: '0',
       type: 'assistant',
-      content: "Hi! I'm your personal memory assistant. Ask me questions about your stored memories, like 'What's my favorite fruit?' or 'Tell me about programming languages I've learned about.'",
+      content: "Hi! I'm your personal memory assistant. Ask me questions about your stored memories, like 'What's my favorite fruit?' or 'Tell me about programming languages I've learned about.' You can also filter by date range using the options above.",
       timestamp: new Date(),
     }
   ]);
+  const [dateRangePreset, setDateRangePreset] = useState<DateRangePreset>('all');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const { user } = useAuth();
   const { askQuestion, isLoading, error } = usePinecone();
+
+  const getDateRange = (): { startDate?: string; endDate?: string } => {
+    const today = getTodayLocalDate();
+    const todayDate = new Date(today);
+    
+    switch (dateRangePreset) {
+      case 'last7':
+        const last7Days = new Date(todayDate);
+        last7Days.setDate(todayDate.getDate() - 7);
+        return { startDate: last7Days.toISOString().split('T')[0], endDate: today };
+      
+      case 'last30':
+        const last30Days = new Date(todayDate);
+        last30Days.setDate(todayDate.getDate() - 30);
+        return { startDate: last30Days.toISOString().split('T')[0], endDate: today };
+      
+      case 'thisMonth':
+        const thisMonthStart = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
+        return { startDate: thisMonthStart.toISOString().split('T')[0], endDate: today };
+      
+      case 'lastMonth':
+        const lastMonthStart = new Date(todayDate.getFullYear(), todayDate.getMonth() - 1, 1);
+        const lastMonthEnd = new Date(todayDate.getFullYear(), todayDate.getMonth(), 0);
+        return { 
+          startDate: lastMonthStart.toISOString().split('T')[0], 
+          endDate: lastMonthEnd.toISOString().split('T')[0] 
+        };
+      
+      case 'custom':
+        return { 
+          startDate: customStartDate || undefined, 
+          endDate: customEndDate || undefined 
+        };
+      
+      case 'all':
+      default:
+        return {};
+    }
+  };
+
+  const getDateRangeLabel = (): string => {
+    switch (dateRangePreset) {
+      case 'last7': return 'Last 7 days';
+      case 'last30': return 'Last 30 days';
+      case 'thisMonth': return 'This month';
+      case 'lastMonth': return 'Last month';
+      case 'custom': 
+        if (customStartDate && customEndDate) {
+          return `${customStartDate} to ${customEndDate}`;
+        } else if (customStartDate) {
+          return `From ${customStartDate}`;
+        } else if (customEndDate) {
+          return `Until ${customEndDate}`;
+        }
+        return 'Custom range';
+      case 'all':
+      default:
+        return 'All memories';
+    }
+  };
 
   const handleSendQuestion = async () => {
     if (!question.trim()) {
@@ -41,7 +109,8 @@ const MemoryChat: React.FC = () => {
     setQuestion('');
 
     try {
-      const result = await askQuestion(currentQuestion);
+      const dateRange = getDateRange();
+      const result = await askQuestion(currentQuestion, 5, dateRange);
       
       if (result.success) {
         const assistantMessage: ChatMessage = {
@@ -91,6 +160,41 @@ const MemoryChat: React.FC = () => {
 
   return (
     <View style={styles.container}>
+      {/* Date Range Selector */}
+      <View style={styles.dateRangeContainer}>
+        <Text style={styles.dateRangeLabel}>Search in: {getDateRangeLabel()}</Text>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          style={styles.dateRangeOptions}
+          contentContainerStyle={styles.dateRangeOptionsContent}
+        >
+          {[
+            { key: 'all', label: 'All' },
+            { key: 'last7', label: 'Last 7 days' },
+            { key: 'last30', label: 'Last 30 days' },
+            { key: 'thisMonth', label: 'This month' },
+            { key: 'lastMonth', label: 'Last month' },
+          ].map((option) => (
+            <TouchableOpacity
+              key={option.key}
+              style={[
+                styles.dateRangeOption,
+                dateRangePreset === option.key && styles.dateRangeOptionActive
+              ]}
+              onPress={() => setDateRangePreset(option.key as DateRangePreset)}
+            >
+              <Text style={[
+                styles.dateRangeOptionText,
+                dateRangePreset === option.key && styles.dateRangeOptionTextActive
+              ]}>
+                {option.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
       <ScrollView 
         style={styles.messagesContainer}
         showsVerticalScrollIndicator={false}
@@ -167,6 +271,55 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: IOSColors.systemGroupedBackground,
+  },
+  
+  dateRangeContainer: {
+    backgroundColor: IOSColors.secondarySystemGroupedBackground,
+    paddingHorizontal: IOSSpacing.md,
+    paddingVertical: IOSSpacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: IOSColors.separator,
+  },
+  
+  dateRangeLabel: {
+    ...IOSTypography.caption1,
+    color: IOSColors.secondaryLabel,
+    marginBottom: IOSSpacing.xs,
+    fontWeight: '600',
+  },
+  
+  dateRangeOptions: {
+    flexGrow: 0,
+  },
+  
+  dateRangeOptionsContent: {
+    paddingRight: IOSSpacing.md,
+  },
+  
+  dateRangeOption: {
+    paddingHorizontal: IOSSpacing.sm,
+    paddingVertical: IOSSpacing.xs,
+    backgroundColor: IOSColors.tertiarySystemGroupedBackground,
+    borderRadius: IOSBorderRadius.sm,
+    marginRight: IOSSpacing.xs,
+    borderWidth: 1,
+    borderColor: IOSColors.separator,
+  },
+  
+  dateRangeOptionActive: {
+    backgroundColor: IOSColors.systemBlue,
+    borderColor: IOSColors.systemBlue,
+  },
+  
+  dateRangeOptionText: {
+    ...IOSTypography.caption1,
+    color: IOSColors.label,
+    fontWeight: '500',
+  },
+  
+  dateRangeOptionTextActive: {
+    color: IOSColors.systemBackground,
+    fontWeight: '600',
   },
   messagesContainer: {
     flex: 1,

@@ -1,3 +1,4 @@
+import { useAuth } from '@/contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import React, { useEffect, useState } from 'react';
@@ -24,6 +25,7 @@ const FileUploadVoiceAssistant: React.FC<FileUploadVoiceAssistantProps> = ({
   const [transcription, setTranscription] = useState('');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const { user } = useAuth();
   const safeAreaStyles = useIOSSafeAreaStyles();
 
   useEffect(() => {
@@ -35,9 +37,7 @@ const FileUploadVoiceAssistant: React.FC<FileUploadVoiceAssistantProps> = ({
 
   const requestPermissions = async () => {
     try {
-      console.log('🎤 Requesting microphone permissions...');
       const { status, granted } = await Audio.requestPermissionsAsync();
-      console.log('🎤 Permission result:', { status, granted });
       
       setHasPermission(status === 'granted');
       
@@ -47,8 +47,6 @@ const FileUploadVoiceAssistant: React.FC<FileUploadVoiceAssistantProps> = ({
           'We need microphone access to record your memories. Please enable microphone access in your device settings.',
           [{ text: 'OK' }]
         );
-      } else {
-        console.log('✅ Microphone permission granted');
       }
     } catch (error) {
       console.error('❌ Permission request failed:', error);
@@ -94,7 +92,6 @@ const FileUploadVoiceAssistant: React.FC<FileUploadVoiceAssistantProps> = ({
       await newRecording.startAsync();
       setRecording(newRecording);
 
-      console.log('🎤 Recording started');
 
     } catch (error) {
       console.error('Failed to start recording:', error);
@@ -112,13 +109,11 @@ const FileUploadVoiceAssistant: React.FC<FileUploadVoiceAssistantProps> = ({
 
       // Get the URI before stopping
       const uri = recording.getURI();
-      console.log('📁 Audio file URI:', uri);
 
       await recording.stopAndUnloadAsync();
       setRecording(null);
 
       if (uri) {
-        console.log('📤 Uploading audio file for transcription...');
         
         // Create FormData to send the audio file
         const formData = new FormData();
@@ -156,6 +151,9 @@ const FileUploadVoiceAssistant: React.FC<FileUploadVoiceAssistantProps> = ({
             body: JSON.stringify({
               text: result.text,
               date: selectedDate,
+              userId: user?.id,  // 🔑 Include user ID for isolation
+              sentiment: result.sentiment,           // 🎭 Pass sentiment from AssemblyAI
+              sentimentConfidence: result.sentimentConfidence, // 🎭 Pass sentiment confidence
               metadata: {
                 source: 'voice_file_upload',
                 confidence: result.confidence
@@ -165,6 +163,20 @@ const FileUploadVoiceAssistant: React.FC<FileUploadVoiceAssistantProps> = ({
 
           if (!saveResponse.ok) {
             const saveError = await saveResponse.json();
+            
+            // Handle specific error cases with user-friendly messages
+            if (saveError.error && saveError.error.includes('Maximum memories reached')) {
+              Alert.alert(
+                'Memory Limit Reached',
+                'You can only store up to 5 memories per day. Please edit or delete an existing memory to add a new one.',
+                [
+                  { text: 'OK', onPress: () => onClose() }
+                ]
+              );
+              setState('idle');
+              return;
+            }
+            
             throw new Error(saveError.error || `Failed to save memory: ${saveResponse.status}`);
           }
 
@@ -187,7 +199,20 @@ const FileUploadVoiceAssistant: React.FC<FileUploadVoiceAssistantProps> = ({
       
     } catch (error: any) {
       console.error('❌ Failed to process recording:', error);
-      setErrorMessage(`Failed to process recording: ${error.message}`);
+      
+      // Handle specific error cases with user-friendly messages
+      if (error.message && error.message.includes('Maximum memories reached')) {
+        Alert.alert(
+          'Memory Limit Reached',
+          'You can only store up to 5 memories per day. Please edit or delete an existing memory to add a new one.',
+          [
+            { text: 'OK', onPress: () => onClose() }
+          ]
+        );
+      } else {
+        setErrorMessage(`Failed to process recording: ${error.message}`);
+      }
+      
       setState('idle');
     }
   };
