@@ -117,7 +117,7 @@ async function generateMemoryTitle(memoryText) {
         messages: [
           {
             role: 'system',
-            content: 'Create a factual title (max 50 characters) for this personal memory. ONLY use information explicitly mentioned in the text. Do NOT add details, locations, or context not present in the original text. Be conservative and stick to the facts. If the memory is vague, keep the title vague too.'
+            content: 'Create a factual title (max 50 characters) for this personal memory. ONLY use information explicitly mentioned in the text. Do NOT add details, locations, or context not present in the original text. Be conservative and stick to the facts. If the memory is vague, keep the title vague too. Do NOT use quotes around the title - just return the plain title text.'
           },
           {
             role: 'user',
@@ -130,9 +130,12 @@ async function generateMemoryTitle(memoryText) {
 
     const aiTitle = response.choices[0].message.content.trim();
     
+    // Remove quotes if present (both single and double quotes)
+    const cleanTitle = aiTitle.replace(/^["']|["']$/g, '').trim();
+    
     // Validate AI title and use fallback if needed
-    if (aiTitle && aiTitle.length <= 50 && aiTitle.length >= 5) {
-      return aiTitle;
+    if (cleanTitle && cleanTitle.length <= 50 && cleanTitle.length >= 5) {
+      return cleanTitle;
     } else {
       return generateFallbackTitle(memoryText);
     }

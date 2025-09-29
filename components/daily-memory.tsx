@@ -3,17 +3,19 @@ import { usePinecone } from '@/hooks/usePinecone';
 import { formatDateForDisplay, isToday } from '@/utils/dateUtils';
 import { getSentimentEmoji } from '@/utils/sentimentUtils';
 import React, { useEffect, useState } from 'react';
-import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Dimensions, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import ConversationalAssistant from './conversational-assistant';
 import FileUploadVoiceAssistant from './file-upload-voice-assistant';
-import { IOSBorderRadius, IOSCardStyles, IOSColors, IOSSpacing, IOSTypography } from './ui/ios-design-system';
+import { ModernBorderRadius, ModernCardStyles, ModernColors, ModernSpacing, ModernTypography } from './ui/modern-design-system';
 
 interface DailyMemoryProps {
   selectedDate: string;
   onMemoryUpdate: (hasMemory: boolean) => void;
+  onExpandedChange?: (isExpanded: boolean) => void;
 }
 
-const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate }) => {
+const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate, onExpandedChange }) => {
   const [memoryText, setMemoryText] = useState('');
   const [memoryTitle, setMemoryTitle] = useState('');
   const [existingMemories, setExistingMemories] = useState<any[]>([]);
@@ -23,11 +25,63 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
   const [showConversationalAssistant, setShowConversationalAssistant] = useState(false);
   const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
   const [isLoadingMemory, setIsLoadingMemory] = useState(false);
+  const [animatedValues, setAnimatedValues] = useState<{ [key: string]: Animated.Value }>({});
   const { user } = useAuth();
   const { upsertData, deleteMemory, updateMemory, isLoading, error } = usePinecone();
+  const insets = useSafeAreaInsets();
+
+  const screenHeight = Dimensions.get('window').height;
+  const screenWidth = Dimensions.get('window').width;
 
   const isTodayDate = () => isToday(selectedDate);
   const formatDate = () => formatDateForDisplay(selectedDate);
+
+  // Initialize animated values for each memory
+  useEffect(() => {
+    const newAnimatedValues: { [key: string]: Animated.Value } = {};
+    existingMemories.forEach(memory => {
+      if (!animatedValues[memory.id]) {
+        newAnimatedValues[memory.id] = new Animated.Value(0);
+      }
+    });
+    if (Object.keys(newAnimatedValues).length > 0) {
+      setAnimatedValues(prev => ({ ...prev, ...newAnimatedValues }));
+    }
+  }, [existingMemories]);
+
+  const handleCardPress = (memoryId: string) => {
+    const isCurrentlyExpanded = expandedMemoryId === memoryId;
+    
+    if (isCurrentlyExpanded) {
+      // Collapse animation
+      Animated.timing(animatedValues[memoryId], {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: false,
+      }).start(() => {
+        setExpandedMemoryId(null);
+        onExpandedChange?.(false); // Notify parent that memory is collapsed
+      });
+    } else {
+      // First collapse any currently expanded card
+      if (expandedMemoryId && animatedValues[expandedMemoryId]) {
+        Animated.timing(animatedValues[expandedMemoryId], {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: false,
+        }).start();
+      }
+      
+      // Then expand the new card
+      setExpandedMemoryId(memoryId);
+      onExpandedChange?.(true); // Notify parent that memory is expanded
+      Animated.timing(animatedValues[memoryId], {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: false,
+      }).start();
+    }
+  };
 
   const handleSaveMemory = async () => {
     if (!memoryText.trim()) {
@@ -52,8 +106,11 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
         // Update existing memory
         result = await updateMemory(editingMemoryId, memoryText.trim(), memoryTitle.trim());
       } else {
-        // Create new memory
-        result = await upsertData(memoryText.trim(), { date: selectedDate });
+        // Create new memory - pass title in metadata
+        result = await upsertData(memoryText.trim(), { 
+          date: selectedDate,
+          title: memoryTitle.trim() || null // Include title in metadata
+        });
       }
       
       if (result.success) {
@@ -63,15 +120,19 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
           // Update existing memory
           setExistingMemories(prev => prev.map(memory => 
             memory.id === editingMemoryId 
-              ? { ...memory, text: memoryText.trim(), title: result.title || memoryTitle.trim() }
+              ? { 
+                  ...memory, 
+                  text: memoryText.trim(), 
+                  title: memoryTitle.trim() || null
+                }
               : memory
           ));
         } else {
           // Add new memory
           const newMemory = { 
-            id: result.id || `temp-${Date.now()}`, 
+            id: ('id' in result ? result.id : null) || `temp-${Date.now()}`, 
             text: memoryText.trim(),
-            title: result.title || 'Untitled Memory',
+            title: ('title' in result ? result.title : null) || memoryTitle.trim() || null,
             date: selectedDate 
           };
           setExistingMemories(prev => [...prev, newMemory]);
@@ -237,10 +298,6 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     setIsEditing(false);
   };
 
-  const toggleInputMethod = () => {
-    setInputMethod(prev => prev === 'text' ? 'voice' : 'text');
-  };
-
   // Function to load existing memory for a specific date
   const loadExistingMemory = async (date: string) => {
     setIsLoadingMemory(true);
@@ -271,7 +328,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
           if (dayMemory.hasMemory && dayMemory.memories) {
                 setExistingMemories(dayMemory.memories.map((memory: any) => ({
                   text: memory.text,
-                  title: memory.title || 'Untitled Memory',  // 📝 Include title with fallback
+                  title: memory.title === 'Untitled Memory' ? null : memory.title,  // Fix old "Untitled Memory" entries
                   date: date,
                   id: memory.id,
                   sentiment: memory.sentiment,           // 🎭 Include sentiment data
@@ -331,7 +388,6 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
           <TouchableOpacity 
             style={styles.compactOption}
             onPress={() => {
-              setInputMethod('text');
               setIsEditing(true);
             }}
           >
@@ -353,81 +409,281 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
     );
   };
 
-  const renderExistingMemories = () => (
-    <View>
-      {existingMemories.map((memory, index) => (
-        <View key={memory.id || index} style={styles.memoryCard}>
-          <TouchableOpacity 
-            style={styles.memoryCardHeader}
-            onPress={() => setExpandedMemoryId(expandedMemoryId === memory.id ? null : memory.id)}
-            activeOpacity={0.7}
+  const renderExistingMemories = () => {
+    if (existingMemories.length === 0) {
+      return null;
+    }
+
+    // Define calming but visible pastel colors for mental health journaling
+    const cardColors = [
+      '#B8E0FF', // Medium Sky Blue - calming but visible
+      '#D0B8FF', // Medium Lavender - relaxing but readable
+      '#FFBABA', // Medium Blush Pink - comforting but clear
+      '#B8F0D0', // Medium Mint Green - healing but visible
+      '#FFD6B8', // Medium Peach - warm but readable
+      '#C8E8FF', // Medium Alice Blue - serene but clear
+      '#E0C8FF', // Medium Lilac - gentle but visible
+    ];
+
+    // Tab bar color to match the navbar exactly
+    const navbarColor = '#000000'; // Pure black to match tab bar
+
+    return (
+      <View style={styles.walletContainer}>
+        {/* Base navbar-colored card with custom rounded implementation */}
+        <View
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 200, // Increased from 180 to accommodate extra padding
+            zIndex: 1000, // High z-index to be above memory cards
+          }}
+        >
+          {/* Rounded top corners using pseudo-elements approach */}
+          <View
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 20, // Height of the border radius
+              backgroundColor: 'transparent',
+            }}
           >
-            <View style={styles.memoryHeaderLeft}>
-              <View style={styles.memoryStatusDot} />
-              <Text style={styles.memoryTitle} numberOfLines={expandedMemoryId === memory.id ? undefined : 2}>
-                {memory.title}
-              </Text>
-              {memory.sentiment && (
-                <Text style={styles.sentimentEmoji}>
-                  {getSentimentEmoji(memory.sentiment)}
-                </Text>
-              )}
-            </View>
-            <Text style={styles.expandIcon}>
-              {expandedMemoryId === memory.id ? '▼' : '▶'}
-            </Text>
-          </TouchableOpacity>
+            {/* Left rounded corner */}
+            <View
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: 20,
+                height: 20,
+                backgroundColor: navbarColor,
+                borderTopLeftRadius: 20,
+              }}
+            />
+            {/* Right rounded corner */}
+            <View
+              style={{
+                position: 'absolute',
+                top: 0,
+                right: 0,
+                width: 20,
+                height: 20,
+                backgroundColor: navbarColor,
+                borderTopRightRadius: 20,
+              }}
+            />
+            {/* Top center fill */}
+            <View
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 20,
+                right: 20,
+                height: 20,
+                backgroundColor: navbarColor,
+              }}
+            />
+          </View>
           
-          {expandedMemoryId === memory.id && (
-            <View style={styles.memoryExpandedContent}>
-              <Text style={styles.memoryDisplayText}>{memory.text}</Text>
-              {isTodayDate() && (
-                <View style={styles.memoryActions}>
+          {/* Main card body */}
+          <View
+            style={{
+              position: 'absolute',
+              top: 20,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: navbarColor,
+            }}
+          >
+            <View style={styles.walletCardTouchArea}>
+              <View style={styles.navbarCardContent}>
+                <Text style={styles.navbarCardSubtitle}>Create memories</Text>
+                <View style={styles.navbarCardButtonsContainer}>
                   <TouchableOpacity 
-                    style={styles.editMemoryButton}
-                    onPress={() => handleEditMemory(memory)}
+                    style={styles.navbarButton}
+                    onPress={() => setShowVoiceAssistant(true)}
+                    activeOpacity={0.7}
                   >
-                    <Text style={styles.editMemoryButtonText}>Edit</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity 
-                    style={styles.deleteMemoryButton}
-                    onPress={() => handleDeleteMemory(memory)}
-                  >
-                    <Text style={styles.deleteMemoryButtonText}>Delete</Text>
+                    <View style={styles.recordButtonContent}>
+                      <View style={styles.recordDot} />
+                      <Text style={styles.navbarButtonText}>Record</Text>
+                    </View>
                   </TouchableOpacity>
                 </View>
-              )}
+              </View>
             </View>
-          )}
-        </View>
-      ))}
-      
-      {isTodayDate() && existingMemories.length < 5 && !isEditing && (
-        <View style={styles.addMemorySection}>
-          <Text style={styles.addMemoryTitle}>Add Memory ({existingMemories.length}/5)</Text>
-          
-          <View style={styles.compactOptions}>
-            <TouchableOpacity 
-              style={styles.compactOption}
-              onPress={() => setIsEditing(true)}
-            >
-              <Text style={styles.compactOptionIcon}>✍️</Text>
-              <Text style={styles.compactOptionText}>Write</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.compactOption}
-              onPress={() => setShowVoiceAssistant(true)}
-            >
-              <Text style={styles.compactOptionIcon}>🎤</Text>
-              <Text style={styles.compactOptionText}>Record</Text>
-            </TouchableOpacity>
           </View>
         </View>
-      )}
-    </View>
-  );
+
+        {/* Memory cards stacked behind the navbar card */}
+        {existingMemories.map((memory, index) => {
+          const isExpanded = expandedMemoryId === memory.id;
+          const cardColor = cardColors[index % cardColors.length];
+          // Increased exposed area for better title visibility - 100px visible area
+          const stackOffset = (index + 1) * 100; // +1 to account for navbar card at 0, increased from 60 to 100
+          const animatedValue = animatedValues[memory.id] || new Animated.Value(0);
+          
+          // Animated style interpolations for full-screen expansion
+          const animatedHeight = animatedValue.interpolate({
+            inputRange: [0, 1],
+            outputRange: [220, screenHeight], // Increased from 180 to 220 to accommodate time + title
+          });
+          
+          const animatedBottom = animatedValue.interpolate({
+            inputRange: [0, 1],
+            outputRange: [isExpanded ? 0 : stackOffset, 0],
+          });
+          
+          const animatedBorderRadius = animatedValue.interpolate({
+            inputRange: [0, 1],
+            outputRange: [ModernBorderRadius.xl, 0],
+          });
+          
+          const animatedZIndex = isExpanded ? 2000 : (existingMemories.length - index + 1); // +1 for navbar card
+          
+          return (
+            <Animated.View
+              key={memory.id || index}
+              style={[
+                styles.walletCard,
+                {
+                  backgroundColor: cardColor,
+                  height: animatedHeight,
+                  bottom: animatedBottom,
+                  zIndex: animatedZIndex,
+                  borderTopLeftRadius: animatedBorderRadius,
+                  borderTopRightRadius: animatedBorderRadius,
+                },
+              ]}
+            >
+              {!isExpanded ? (
+                <TouchableOpacity
+                  style={styles.walletCardTouchArea}
+                  onPress={() => handleCardPress(memory.id)}
+                  activeOpacity={0.9}
+                >
+                  <View style={styles.walletCardHeader}>
+                  <View style={styles.walletCardTitleSection}>
+                    {!isExpanded && (
+                      <Text style={styles.walletCardTime}>
+                        {new Date(memory.timestamp || memory.date || Date.now()).toLocaleTimeString('en-US', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: true
+                        })}
+                      </Text>
+                    )}
+                    <Text style={styles.walletCardTitle} numberOfLines={isExpanded ? undefined : 4}>
+                      {memory.title || `Memory from ${formatDateForDisplay(selectedDate)}`}
+                    </Text>
+                  </View>
+                  {memory.sentiment && (
+                    <Text style={styles.walletCardEmoji}>
+                      {getSentimentEmoji(memory.sentiment)}
+                    </Text>
+                  )}
+                </View>
+                </TouchableOpacity>
+              ) : null}
+                
+              {isExpanded && (
+                <Animated.View 
+                  style={[
+                    styles.expandedMemoryContainer,
+                    {
+                      opacity: animatedValue,
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      zIndex: 2000,
+                    }
+                  ]}
+                >
+                  <SafeAreaView style={styles.expandedSafeArea} edges={['top', 'left', 'right']}>
+                    {/* Header with close button and action icons */}
+                    <View style={[styles.expandedHeader, { paddingTop: insets.top + ModernSpacing.md }]}>
+                    <TouchableOpacity 
+                      style={styles.closeButton}
+                      onPress={() => handleCardPress(memory.id)}
+                    >
+                      <Text style={styles.closeButtonText}>×</Text>
+                    </TouchableOpacity>
+                    
+                    {isTodayDate() && (
+                      <View style={styles.headerActions}>
+                        <TouchableOpacity 
+                          style={styles.headerActionButton}
+                          onPress={() => handleDeleteMemory(memory)}
+                        >
+                          <Text style={styles.headerActionIcon}>🗑️</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Memory content */}
+                  <View style={styles.expandedContent}>
+                    <View style={styles.expandedTitleSection}>
+                      <Text style={styles.expandedTitle}>
+                        {memory.title || `Memory from ${formatDateForDisplay(selectedDate)}`}
+                      </Text>
+                      {memory.sentiment && (
+                        <Text style={styles.expandedEmoji}>
+                          {getSentimentEmoji(memory.sentiment)}
+                        </Text>
+                      )}
+                    </View>
+                    
+                    <Text style={styles.expandedDate}>
+                      {formatDateForDisplay(selectedDate)}
+                    </Text>
+                    
+                    <View style={styles.expandedTextSection}>
+                      <Text style={styles.expandedText}>{memory.text}</Text>
+                    </View>
+                  </View>
+
+                  {/* Floating Action Buttons */}
+                  <View style={styles.floatingButtonsContainer}>
+                    <TouchableOpacity style={styles.floatingButton}>
+                      <Text style={styles.floatingButtonIcon}>⚕️</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                      style={styles.floatingButton}
+                      onPress={() => handleEditMemory(memory)}
+                    >
+                      <Text style={styles.floatingButtonIcon}>✏️</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity style={styles.floatingButton}>
+                      <Text style={styles.floatingButtonIcon}>📎</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity style={styles.floatingButton}>
+                      <Text style={styles.floatingButtonIcon}>☰</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity style={styles.floatingButtonPrimary}>
+                      <Text style={styles.floatingButtonPrimaryIcon}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                  </SafeAreaView>
+                </Animated.View>
+              )}
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
 
   const renderEditor = () => (
     <View style={styles.editorContainer}>
@@ -439,7 +695,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
       <TextInput
         style={styles.titleInput}
         placeholder="Memory title (optional - AI will generate if empty)"
-        placeholderTextColor={IOSColors.tertiaryLabel}
+        placeholderTextColor={ModernColors.tertiary}
         value={memoryTitle}
         onChangeText={setMemoryTitle}
         maxLength={50}
@@ -449,7 +705,7 @@ const DailyMemory: React.FC<DailyMemoryProps> = ({ selectedDate, onMemoryUpdate 
       <TextInput
         style={styles.textInput}
         placeholder="What happened today? How are you feeling? What did you learn?"
-        placeholderTextColor={IOSColors.tertiaryLabel}
+        placeholderTextColor={ModernColors.tertiary}
         value={memoryText}
         onChangeText={setMemoryText}
         multiline
@@ -538,10 +794,9 @@ const styles = StyleSheet.create({
   
   // Past Date Styles
   pastDateContainer: {
-    ...IOSCardStyles.insetGrouped,
-    paddingVertical: IOSSpacing['2xl'],
-    backgroundColor: IOSColors.secondarySystemGroupedBackground,
-    paddingHorizontal: IOSSpacing.lg + IOSSpacing.md, // Match calendar's total padding (24+16=40px)
+    ...ModernCardStyles.base,
+    paddingVertical: ModernSpacing['2xl'],
+    backgroundColor: ModernColors.secondaryBackground,
   },
   pastDateContent: {
     alignItems: 'center',
@@ -550,40 +805,40 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: IOSColors.systemGray5,
+    backgroundColor: ModernColors.secondaryBackground,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: IOSSpacing.sm,
+    marginBottom: ModernSpacing.sm,
   },
   pastDateIcon: {
     fontSize: 18,
   },
   pastDateTitle: {
-    ...IOSTypography.callout,
-    color: IOSColors.secondaryLabel,
+    ...ModernTypography.callout,
+    color: ModernColors.secondary,
     fontSize: 13,
     textAlign: 'center',
   },
   
   // Today Empty State Styles - Compact Version
   todayEmptyState: {
-    ...IOSCardStyles.insetGrouped,
-    paddingVertical: IOSSpacing.lg,
-    backgroundColor: IOSColors.systemBackground,
-    paddingHorizontal: IOSSpacing.lg + IOSSpacing.md, // Match calendar's total padding (24+16=40px)
+    ...ModernCardStyles.base,
+    paddingVertical: ModernSpacing.lg,
+    backgroundColor: ModernColors.cardBackground,
+    paddingHorizontal: ModernSpacing.lg + ModernSpacing.md, // Match calendar's total padding (24+16=40px)
   },
   compactHeader: {
     alignItems: 'center',
-    marginBottom: IOSSpacing.lg,
+    marginBottom: ModernSpacing.lg,
   },
   compactTitle: {
-    ...IOSTypography.title2,
-    color: IOSColors.label,
-    marginBottom: IOSSpacing.xs,
+    ...ModernTypography.title2,
+    color: ModernColors.primary,
+    marginBottom: ModernSpacing.xs,
   },
   compactSubtitle: {
-    ...IOSTypography.subhead,
-    color: IOSColors.secondaryLabel,
+    ...ModernTypography.subhead,
+    color: ModernColors.secondary,
     textAlign: 'center',
   },
   
@@ -591,185 +846,86 @@ const styles = StyleSheet.create({
   compactOptions: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: IOSSpacing.lg,
-    paddingHorizontal: IOSSpacing.md,
+    gap: ModernSpacing.lg,
+    paddingHorizontal: ModernSpacing.md,
   },
   compactOption: {
     alignItems: 'center',
-    padding: IOSSpacing.lg,
-    backgroundColor: IOSColors.secondarySystemGroupedBackground,
-    borderRadius: IOSBorderRadius.xl,
+    padding: ModernSpacing.lg,
+    backgroundColor: ModernColors.secondaryBackground,
+    borderRadius: ModernBorderRadius.xl,
     minWidth: 100,
     flex: 1,
     maxWidth: 140,
   },
   compactOptionIcon: {
     fontSize: 28,
-    marginBottom: IOSSpacing.xs,
+    marginBottom: ModernSpacing.xs,
   },
   compactOptionText: {
-    ...IOSTypography.subhead,
-    color: IOSColors.label,
+    ...ModernTypography.subhead,
+    color: ModernColors.primary,
     fontWeight: '600',
     textAlign: 'center',
   },
-  // Memory Card Styles - Expandable cards with titles
-  memoryCard: {
-    ...IOSCardStyles.insetGrouped,
-    marginHorizontal: IOSSpacing.md,
-    marginBottom: IOSSpacing.sm,
-    backgroundColor: IOSColors.systemBackground,
-    borderRadius: IOSBorderRadius.md,
-    overflow: 'hidden',
-  },
   
-  memoryCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: IOSSpacing.md,
-    paddingVertical: IOSSpacing.md,
-  },
-  
-  memoryHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    marginRight: IOSSpacing.sm,
-  },
-  
-  memoryTitle: {
-    ...IOSTypography.body,
-    color: IOSColors.label,
-    fontWeight: '600',
-    flex: 1,
-    marginLeft: IOSSpacing.sm,
-  },
-  
-  expandIcon: {
-    ...IOSTypography.caption1,
-    color: IOSColors.tertiaryLabel,
-    fontWeight: '600',
-  },
-  
-  memoryExpandedContent: {
-    paddingHorizontal: IOSSpacing.md,
-    paddingBottom: IOSSpacing.md,
-    borderTopWidth: 1,
-    borderTopColor: IOSColors.separator,
-  },
-  memoryStatusDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: IOSColors.systemGreen,
-    marginRight: 6,
-  },
-  memoryStatusText: {
-    ...IOSTypography.caption2,
-    color: IOSColors.systemGreen,
-    fontWeight: '600',
-    fontSize: 11,
-  },
-  
-  sentimentEmoji: {
-    fontSize: 16,
-    marginLeft: IOSSpacing.xs,
-  },
-  
-  memoryActions: {
-    flexDirection: 'row',
-    gap: IOSSpacing.xs,
-  },
-  
-  editMemoryButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: IOSColors.systemBlue + '15',
-    borderRadius: 6,
-  },
-  editMemoryButtonText: {
-    ...IOSTypography.caption2,
-    color: IOSColors.systemBlue,
-    fontWeight: '600',
-    fontSize: 11,
-  },
-  
-  deleteMemoryButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: IOSColors.systemRed + '15',
-    borderRadius: 6,
-  },
-  deleteMemoryButtonText: {
-    ...IOSTypography.caption2,
-    color: IOSColors.systemRed,
-    fontWeight: '600',
-    fontSize: 11,
-  },
-  memoryDisplayText: {
-    ...IOSTypography.callout,
-    color: IOSColors.label,
-    lineHeight: 18,
-    fontSize: 13,
-  },
   editorContainer: {
-    ...IOSCardStyles.insetGrouped,
-    paddingHorizontal: IOSSpacing.lg + IOSSpacing.md, // Match calendar's total padding (24+16=40px)
+    ...ModernCardStyles.base,
+    paddingHorizontal: ModernSpacing.lg + ModernSpacing.md, // Match calendar's total padding (24+16=40px)
   },
   editorTitle: {
-    ...IOSTypography.callout,
-    marginBottom: IOSSpacing.xs,
-    color: IOSColors.label,
+    ...ModernTypography.callout,
+    marginBottom: ModernSpacing.xs,
+    color: ModernColors.primary,
     fontWeight: '600',
     fontSize: 14,
   },
   editorSubtitle: {
-    ...IOSTypography.caption2,
-    color: IOSColors.secondaryLabel,
-    marginBottom: IOSSpacing.sm,
+    ...ModernTypography.caption2,
+    color: ModernColors.secondary,
+    marginBottom: ModernSpacing.sm,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     fontSize: 10,
   },
   titleInput: {
-    ...IOSTypography.body,
-    backgroundColor: IOSColors.tertiarySystemFill,
-    borderRadius: IOSBorderRadius.md,
-    padding: IOSSpacing.sm,
+    ...ModernTypography.body,
+    backgroundColor: ModernColors.cardBackground,
+    borderRadius: ModernBorderRadius.md,
+    padding: ModernSpacing.sm,
     borderWidth: 1,
-    borderColor: IOSColors.separator,
-    marginBottom: IOSSpacing.sm,
+    borderColor: ModernColors.border,
+    marginBottom: ModernSpacing.sm,
     fontSize: 15,
     fontWeight: '600',
-    color: IOSColors.label,
+    color: ModernColors.primary,
   },
   
   textInput: {
-    ...IOSTypography.callout,
-    backgroundColor: IOSColors.tertiarySystemFill,
-    borderRadius: IOSBorderRadius.md,
-    padding: IOSSpacing.sm,
+    ...ModernTypography.callout,
+    backgroundColor: ModernColors.cardBackground,
+    borderRadius: ModernBorderRadius.md,
+    padding: ModernSpacing.sm,
     minHeight: 80,
     borderWidth: 1,
-    borderColor: IOSColors.separator,
-    marginBottom: IOSSpacing.sm,
+    borderColor: ModernColors.border,
+    marginBottom: ModernSpacing.sm,
     fontSize: 13,
     lineHeight: 18,
   },
   characterCount: {
     alignItems: 'flex-end',
-    marginBottom: IOSSpacing.sm,
+    marginBottom: ModernSpacing.sm,
   },
   characterCountText: {
-    ...IOSTypography.caption2,
-    color: IOSColors.secondaryLabel,
+    ...ModernTypography.caption2,
+    color: ModernColors.secondary,
     fontSize: 10,
   },
   editorActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: IOSSpacing.md,
+    gap: ModernSpacing.md,
   },
   actionButton: {
     flex: 1,
@@ -779,147 +935,85 @@ const styles = StyleSheet.create({
   },
   // Compact Button Styles
   cancelButton: {
-    backgroundColor: IOSColors.secondarySystemFill,
-    borderRadius: IOSBorderRadius.sm,
-    paddingVertical: IOSSpacing.xs,
-    paddingHorizontal: IOSSpacing.sm,
+    backgroundColor: ModernColors.secondaryBackground,
+    borderRadius: ModernBorderRadius.sm,
+    paddingVertical: ModernSpacing.xs,
+    paddingHorizontal: ModernSpacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 32,
   },
   cancelButtonText: {
-    ...IOSTypography.callout,
-    color: IOSColors.label,
+    ...ModernTypography.callout,
+    color: ModernColors.primary,
     fontWeight: '600',
     fontSize: 13,
   },
   saveButton: {
-    backgroundColor: IOSColors.systemBlue,
-    borderRadius: IOSBorderRadius.sm,
-    paddingVertical: IOSSpacing.xs,
-    paddingHorizontal: IOSSpacing.sm,
+    backgroundColor: ModernColors.accent,
+    borderRadius: ModernBorderRadius.sm,
+    paddingVertical: ModernSpacing.xs,
+    paddingHorizontal: ModernSpacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 32,
   },
   saveButtonText: {
-    ...IOSTypography.callout,
-    color: IOSColors.systemBackground,
+    ...ModernTypography.callout,
+    color: ModernColors.cardBackground,
     fontWeight: '600',
     fontSize: 13,
   },
-  // Add Memory Section - Match calendar width
-  addMemorySection: {
-    ...IOSCardStyles.insetGrouped, // Same base as calendar
-    marginHorizontal: IOSSpacing.md, // Same override as calendar
-    paddingHorizontal: IOSSpacing.md, // Same additional padding as calendar
-    paddingVertical: IOSSpacing.md,
-    marginTop: IOSSpacing.sm,
-    marginBottom: 0,
-    backgroundColor: IOSColors.secondarySystemGroupedBackground,
-    borderRadius: IOSBorderRadius.md,
-  },
-  addMemoryTitle: {
-    ...IOSTypography.subhead,
-    color: IOSColors.label,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: IOSSpacing.sm,
-  },
-  errorContainer: {
-    marginTop: IOSSpacing.md,
-    padding: IOSSpacing.md,
-    backgroundColor: IOSColors.systemRed + '10', // 10% opacity
-    borderRadius: IOSBorderRadius.md,
-    borderWidth: 1,
-    borderColor: IOSColors.systemRed + '30', // 30% opacity
-  },
-  errorText: {
-    ...IOSTypography.callout,
-    color: IOSColors.systemRed,
-    textAlign: 'center',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  inputMethodToggle: {
-    flexDirection: 'row',
-    backgroundColor: IOSColors.tertiarySystemFill,
-    borderRadius: IOSBorderRadius.lg,
-    padding: 4,
-    marginBottom: IOSSpacing.lg,
-  },
-  toggleButton: {
-    flex: 1,
-    paddingVertical: IOSSpacing.sm,
-    paddingHorizontal: IOSSpacing.md,
-    borderRadius: IOSBorderRadius.md,
-    alignItems: 'center',
-  },
-  activeToggleButton: {
-    backgroundColor: IOSColors.systemBackground,
-    shadowColor: IOSColors.label,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  toggleButtonText: {
-    ...IOSTypography.subhead,
-    color: IOSColors.secondaryLabel,
-    fontWeight: '500',
-  },
-  activeToggleButtonText: {
-    color: IOSColors.label,
-    fontWeight: '600',
-  },
+  
+  // Add Memory Section - Modern card design
   voiceInputContainer: {
-    backgroundColor: IOSColors.secondarySystemGroupedBackground,
-    borderRadius: IOSBorderRadius.lg,
-    padding: IOSSpacing.lg,
-    marginBottom: IOSSpacing.md,
+    backgroundColor: ModernColors.secondaryBackground,
+    borderRadius: ModernBorderRadius.lg,
+    padding: ModernSpacing.lg,
+    marginBottom: ModernSpacing.md,
     minHeight: 160,
     alignItems: 'center',
     justifyContent: 'center',
   },
   transcriptionPreview: {
-    marginTop: IOSSpacing.lg,
-    padding: IOSSpacing.md,
-    backgroundColor: IOSColors.systemBackground,
-    borderRadius: IOSBorderRadius.md,
+    marginTop: ModernSpacing.lg,
+    padding: ModernSpacing.md,
+    backgroundColor: ModernColors.cardBackground,
+    borderRadius: ModernBorderRadius.md,
     borderWidth: 1,
-    borderColor: IOSColors.separator,
+    borderColor: ModernColors.border,
     width: '100%',
   },
   transcriptionLabel: {
-    ...IOSTypography.caption1,
-    color: IOSColors.secondaryLabel,
-    marginBottom: IOSSpacing.sm,
+    ...ModernTypography.caption1,
+    color: ModernColors.secondary,
+    marginBottom: ModernSpacing.sm,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   transcriptionText: {
-    ...IOSTypography.body,
+    ...ModernTypography.body,
     lineHeight: 22,
   },
   // Loading Styles
   loadingContainer: {
-    ...IOSCardStyles.insetGrouped,
+    ...ModernCardStyles.base,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: IOSSpacing['2xl'],
+     paddingVertical: ModernSpacing['2xl'],
     minHeight: 200,
-    backgroundColor: IOSColors.systemBackground,
-    paddingHorizontal: IOSSpacing.lg + IOSSpacing.md, // Match calendar's total padding (24+16=40px)
+    backgroundColor: ModernColors.cardBackground,
+    paddingHorizontal: ModernSpacing.lg + ModernSpacing.md, // Match calendar's total padding (24+16=40px)
   },
   loadingSpinner: {
-    marginBottom: IOSSpacing.lg,
+    marginBottom: ModernSpacing.lg,
   },
   loadingIcon: {
     fontSize: 32,
   },
   loadingText: {
-    ...IOSTypography.callout,
-    color: IOSColors.secondaryLabel,
+    ...ModernTypography.callout,
+    color: ModernColors.secondary,
     textAlign: 'center',
     fontSize: 13,
     lineHeight: 18,
@@ -929,16 +1023,356 @@ const styles = StyleSheet.create({
   errorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: IOSSpacing.md,
-    padding: IOSSpacing.md,
-    backgroundColor: IOSColors.systemRed + '10',
-    borderRadius: IOSBorderRadius.lg,
+    marginTop: ModernSpacing.md,
+    padding: ModernSpacing.md,
+    backgroundColor: ModernColors.error + '10',
+    borderRadius: ModernBorderRadius.lg,
     borderLeftWidth: 4,
-    borderLeftColor: IOSColors.systemRed,
+    borderLeftColor: ModernColors.error,
   },
   errorIcon: {
     fontSize: 20,
-    marginRight: IOSSpacing.sm,
+    marginRight: ModernSpacing.sm,
+  },
+  errorText: {
+    ...ModernTypography.callout,
+    color: ModernColors.error,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  
+  // Wallet-Style Cards - Apple Wallet inspired  
+  walletContainer: {
+    position: 'absolute',
+    bottom: 0, // Changed from -34 to prevent clipping
+    left: 0,
+    right: 0,
+    minHeight: 600, // Reduced from 900px for smaller cards
+    paddingBottom: 150, // Increased from 117 to better accommodate home indicator and tab bar
+    zIndex: 100, // Ensure cards appear above other content
+  },
+  
+  walletCard: {
+    position: 'absolute',
+    left: 0, // Full width within container
+    right: 0, // Full width within container
+    borderTopLeftRadius: ModernBorderRadius.xl, // Top corners rounded
+    borderTopRightRadius: ModernBorderRadius.xl, // Top corners rounded
+    borderBottomLeftRadius: 0, // No bottom rounding
+    borderBottomRightRadius: 0, // No bottom rounding
+    // Remove all shadows for cleaner appearance
+    minHeight: 220, // Increased to accommodate time + title properly
+    height: 220, // Fixed height to ensure consistency
+    overflow: 'visible', // Ensure rounded corners are rendered properly
+  },
+  
+  walletCardTouchArea: {
+    flex: 1,
+    paddingHorizontal: 0, // Remove all horizontal padding for true edge-to-edge
+    paddingVertical: ModernSpacing.lg,
+    paddingTop: ModernSpacing.lg,
+    minHeight: 220, // Match the increased card height
+  },
+  
+  walletCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: ModernSpacing.sm,
+    paddingHorizontal: ModernSpacing.xl, // Add padding only to header content, not the card itself
+  },
+  
+  walletCardTime: {
+    fontSize: 12,
+    color: '#666666',
+    fontWeight: '500',
+    marginBottom: ModernSpacing.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  
+  walletCardTitleSection: {
+    flex: 1,
+    marginRight: ModernSpacing.xs, // Reduced margin to give more space to title
+  },
+  
+  walletCardTitle: {
+    ...ModernTypography.title3,
+    color: '#000000', // Black text for better readability
+    fontWeight: '700',
+    fontSize: 17, // Reduced from 18 to fit more text
+    lineHeight: 22, // Reduced from 24 to fit more lines
+    // Remove text shadow for cleaner appearance
+  },
+  
+  walletCardEmoji: {
+    fontSize: 24,
+    marginLeft: ModernSpacing.sm,
+    // Remove text shadow for cleaner appearance
+  },
+  
+  walletCardContent: {
+    marginTop: ModernSpacing.sm, // Reduced from lg to give more space for text
+    flex: 1,
+    paddingHorizontal: ModernSpacing.xl, // Add padding to content area
+    paddingBottom: ModernSpacing.md, // Add bottom padding
+  },
+  
+  walletCardText: {
+    ...ModernTypography.body,
+    color: '#000000', // Black text for better readability
+    fontSize: 14, // Reduced from 15 to fit more text
+    lineHeight: 20, // Reduced from 22 to fit more text
+    marginBottom: 0, // Remove bottom margin to maximize space
+    // Remove text shadow for cleaner appearance
+  },
+  
+  walletCardActions: {
+    flexDirection: 'row',
+    gap: ModernSpacing.md,
+    marginTop: 'auto',
+  },
+  
+  walletActionButton: {
+    paddingVertical: ModernSpacing.sm,
+    paddingHorizontal: ModernSpacing.lg,
+    borderRadius: ModernBorderRadius.lg,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  
+  editWalletButton: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  
+  deleteWalletButton: {
+    backgroundColor: 'rgba(255,0,0,0.2)',
+    borderColor: 'rgba(255,0,0,0.4)',
+  },
+  
+  walletActionButtonText: {
+    ...ModernTypography.callout,
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  
+  navbarCard: {
+    // Static card that sits right above the navbar with rounded top corners
+    borderTopLeftRadius: ModernBorderRadius.xl,
+    borderTopRightRadius: ModernBorderRadius.xl,
+  },
+  
+  navbarCardTitle: {
+    ...ModernTypography.title3,
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 18,
+    lineHeight: 24,
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    opacity: 0.9,
+  },
+  
+  navbarCardContent: {
+    flex: 1,
+    justifyContent: 'flex-end', // Push content towards bottom
+    alignItems: 'center',
+    paddingBottom: ModernSpacing.xl, // More space below button
+  },
+  
+  navbarCardSubtitle: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '400', // Not bold
+    textAlign: 'center',
+    marginBottom: ModernSpacing.lg, // More space between text and button
+    opacity: 0.8,
+  },
+  
+  navbarCardButtonsContainer: {
+    width: '100%',
+    paddingHorizontal: ModernSpacing.lg,
+    paddingBottom: ModernSpacing.xl + ModernSpacing.lg, // Increased padding to avoid home indicator clipping
+  },
+  
+  navbarButton: {
+    backgroundColor: '#FFFFFF', // White background
+    paddingVertical: ModernSpacing.md,
+    paddingHorizontal: ModernSpacing.xl,
+    borderRadius: ModernBorderRadius.xl, // More rounded edges (20px)
+    width: '100%', // Full width since there's only one button
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  navbarButtonText: {
+    color: '#000000', // Black text
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  
+  recordButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  recordDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF0000', // Red dot
+    marginRight: 8,
+  },
+  
+  // Expanded Memory Styles
+  expandedMemoryContainer: {
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  
+  expandedSafeArea: {
+    flex: 1,
+    paddingHorizontal: ModernSpacing.md,
+  },
+  
+  expandedHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: ModernSpacing.xl,
+    paddingBottom: ModernSpacing.md,
+  },
+  
+  headerActions: {
+    flexDirection: 'row',
+    gap: ModernSpacing.sm,
+  },
+  
+  headerActionButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  headerActionIcon: {
+    fontSize: 18,
+  },
+  
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  closeButtonText: {
+    fontSize: 24,
+    fontWeight: '300',
+    color: '#000000',
+  },
+  
+  expandedContent: {
+    flex: 1,
+    paddingHorizontal: ModernSpacing.xl,
+    paddingVertical: ModernSpacing.lg,
+  },
+  
+  expandedTitleSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: ModernSpacing.xl,
+  },
+  
+  expandedTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#000000',
+    flex: 1,
+    lineHeight: 34,
+  },
+  
+  expandedEmoji: {
+    fontSize: 32,
+    marginLeft: ModernSpacing.md,
+  },
+  
+  expandedDate: {
+    fontSize: 16,
+    color: '#666666',
+    fontWeight: '500',
+    marginBottom: ModernSpacing.xl,
+    paddingHorizontal: ModernSpacing.xs,
+  },
+  
+  expandedTextSection: {
+    marginBottom: ModernSpacing.xl,
+  },
+  
+  expandedText: {
+    fontSize: 18,
+    lineHeight: 26,
+    color: '#333333',
+    marginBottom: ModernSpacing.lg,
+  },
+  
+  // Floating Action Buttons
+  floatingButtonsContainer: {
+    position: 'absolute',
+    bottom: 80, // Position above bottom navigation
+    alignSelf: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: ModernSpacing.lg,
+    paddingVertical: ModernSpacing.md,
+    borderRadius: 50, // Make it a large pill/circular shape
+    minWidth: 320,
+    height: 80,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)', // Same as close button background
+    zIndex: 1000, // High z-index to appear above other elements
+  },
+  
+  floatingButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  floatingButtonIcon: {
+    fontSize: 18,
+    color: '#000000',
+  },
+  
+  floatingButtonPrimary: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  floatingButtonPrimaryIcon: {
+    fontSize: 18,
+    color: '#000000',
+    fontWeight: '200',
   },
 });
 

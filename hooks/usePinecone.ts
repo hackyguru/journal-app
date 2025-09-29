@@ -81,7 +81,12 @@ export const usePinecone = () => {
 
       const result = await response.json();
       
-      return { success: true, id: result.id, date: result.date };
+      return { 
+        success: true, 
+        id: result.id, 
+        date: result.date,
+        title: result.title // Include AI-generated title from backend
+      };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to store memory';
       console.error('Memory storage error:', errorMessage);

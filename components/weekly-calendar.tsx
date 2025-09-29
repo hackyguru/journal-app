@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { IOSBorderRadius, IOSCardStyles, IOSColors, IOSShadows, IOSSpacing, IOSTypography } from './ui/ios-design-system';
+import { ModernColors, ModernSpacing, ModernTypography } from './ui/modern-design-system';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -167,33 +167,13 @@ const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Header with navigation */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.navButton}
-          onPress={() => navigateWeek('prev')}
-        >
-          <Text style={styles.navButtonText}>‹</Text>
-        </TouchableOpacity>
-        
-        <View style={styles.centerSection}>
-          <Text style={styles.weekText}>{getCurrentWeekText()}</Text>
-          <TouchableOpacity 
-            style={styles.todayButton}
-            onPress={goToToday}
-          >
-            <Text style={styles.todayButtonText}>Today</Text>
-          </TouchableOpacity>
-        </View>
-        
-        <TouchableOpacity 
-          style={styles.navButton}
-          onPress={() => navigateWeek('next')}
-        >
-          <Text style={styles.navButtonText}>›</Text>
-        </TouchableOpacity>
+      {/* Day Headers */}
+      <View style={styles.dayHeadersContainer}>
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((dayLetter, index) => (
+          <Text key={`header-${index}`} style={styles.dayHeader}>{dayLetter}</Text>
+        ))}
       </View>
-
+      
       {/* Days of the week */}
       <View style={styles.daysContainer}>
         {currentWeek.map((day) => (
@@ -203,7 +183,6 @@ const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
             onPress={() => onDateSelect(day.date)}
             disabled={day.isFuture}
           >
-            <Text style={getWeekdayTextStyle(day)}>{day.weekday}</Text>
             <Text style={getDayTextStyle(day)}>{day.day}</Text>
           </TouchableOpacity>
         ))}
@@ -214,138 +193,78 @@ const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    ...IOSCardStyles.insetGrouped,
-    marginHorizontal: IOSSpacing.md,
-    marginVertical: IOSSpacing.sm,
-    paddingHorizontal: IOSSpacing.md,
-    paddingVertical: IOSSpacing.xl,
+    paddingHorizontal: ModernSpacing.lg,
+    paddingVertical: ModernSpacing.md,
   },
-  header: {
+  
+  dayHeadersContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: IOSSpacing.xl,
+    paddingHorizontal: ModernSpacing.xs,
+    marginBottom: ModernSpacing.sm,
   },
-  centerSection: {
-    flex: 1,
-    alignItems: 'center',
+  
+  dayHeader: {
+    ...ModernTypography.caption1,
+    color: ModernColors.secondary,
+    fontWeight: '500',
+    textAlign: 'center',
+    width: (screenWidth - 120) / 7,
   },
-  navButton: {
-    width: 44, // iOS minimum touch target
-    height: 44,
-    borderRadius: IOSBorderRadius.full,
-    backgroundColor: IOSColors.systemFill,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  navButtonText: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: IOSColors.systemBlue,
-  },
-  weekText: {
-    ...IOSTypography.headline,
-    color: IOSColors.label,
-    marginBottom: IOSSpacing.xs,
-  },
-  todayButton: {
-    backgroundColor: IOSColors.systemBlue,
-    paddingHorizontal: IOSSpacing.md,
-    paddingVertical: IOSSpacing.xs,
-    borderRadius: IOSBorderRadius.md,
-  },
-  todayButtonText: {
-    ...IOSTypography.caption1,
-    color: IOSColors.systemBackground,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
+  // Removed unused navigation styles for clean design
   daysContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: IOSSpacing.xs,
+    paddingHorizontal: ModernSpacing.xs,
   },
   dayContainer: {
-    width: (screenWidth - 120) / 7, // More generous calculation for wider containers
-    height: 80,
-    borderRadius: IOSBorderRadius.xl,
+    width: (screenWidth - 120) / 7,
+    height: 50,
+    borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: IOSColors.tertiarySystemFill,
-    position: 'relative',
+    backgroundColor: 'transparent',
   },
   todayContainer: {
-    backgroundColor: IOSColors.systemBlue + '20', // 20% opacity
-    borderColor: IOSColors.systemBlue,
-    borderWidth: 1,
+    backgroundColor: ModernColors.secondaryBackground,
   },
   todaySelectedContainer: {
-    backgroundColor: IOSColors.systemBlue,
-    borderColor: IOSColors.systemBlue,
-    borderWidth: 2,
-    transform: [{ scale: 1.05 }],
-    ...IOSShadows.small,
+    backgroundColor: ModernColors.primary, // Black background like in reference
   },
   selectedContainer: {
-    backgroundColor: IOSColors.systemBlue + '15', // 15% opacity
-    borderWidth: 1,
-    borderColor: IOSColors.systemBlue,
+    backgroundColor: ModernColors.primary, // Black background like in reference
   },
   futureContainer: {
-    backgroundColor: IOSColors.quaternarySystemFill,
+    backgroundColor: ModernColors.secondaryBackground,
     opacity: 0.6,
   },
   memoryContainer: {
-    backgroundColor: IOSColors.systemGreen + '10', // 10% opacity
+    backgroundColor: ModernColors.success + '10', // 10% opacity
     borderWidth: 1,
-    borderColor: IOSColors.systemGreen + '40', // 40% opacity
+    borderColor: ModernColors.success + '40', // 40% opacity
   },
-  weekdayText: {
-    ...IOSTypography.caption1,
-    color: IOSColors.secondaryLabel,
-    marginBottom: IOSSpacing.xs,
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  todayWeekdayText: {
-    color: IOSColors.systemBlue,
-    fontWeight: '600',
-  },
-  todaySelectedWeekdayText: {
-    color: IOSColors.systemBackground,
-    fontWeight: '700',
-  },
-  selectedWeekdayText: {
-    color: IOSColors.systemBlue,
-    fontWeight: '600',
-  },
-  futureWeekdayText: {
-    color: IOSColors.tertiaryLabel,
-  },
+  
+  // Text Styles
   dayText: {
-    ...IOSTypography.headline,
-    fontSize: 20,
+    ...ModernTypography.headline,
     fontWeight: '600',
-    color: IOSColors.label,
-  },
-  todayText: {
-    color: IOSColors.systemBlue,
-    fontWeight: '700',
-  },
-  todaySelectedText: {
-    color: IOSColors.systemBackground,
-    fontWeight: '800',
+    fontSize: 18,
+    color: ModernColors.primary,
   },
   selectedText: {
-    color: IOSColors.systemBlue,
-    fontWeight: '700',
+    color: ModernColors.cardBackground, // White text on black background
+  },
+  todayText: {
+    color: ModernColors.primary,
+  },
+  todaySelectedText: {
+    color: ModernColors.cardBackground, // White text on black background
   },
   futureText: {
-    color: IOSColors.tertiaryLabel,
+    color: ModernColors.tertiary,
   },
+  // Removed unused weekday text styles - we only show day numbers now
+  // Duplicate text styles removed - using the ones defined above
 });
 
 export default WeeklyCalendar;

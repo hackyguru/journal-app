@@ -1,19 +1,21 @@
 import DailyMemory from '@/components/daily-memory';
-import { IOSBorderRadius, IOSColors, IOSLayoutStyles, IOSSpacing, IOSTypography, useIOSSafeAreaStyles } from '@/components/ui/ios-design-system';
+import { ModernColors, ModernLayoutStyles, ModernSpacing, ModernTypography } from '@/components/ui/modern-design-system';
 import WeeklyCalendar from '@/components/weekly-calendar';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePinecone } from '@/hooks/usePinecone';
 import { getCurrentWeekStart, getTodayLocalDate } from '@/utils/dateUtils';
+import { useNavigation } from '@react-navigation/native';
 import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-export default function HomeScreen() {
+export default function ModernHomeScreen() {
   const [selectedDate, setSelectedDate] = useState<string>(getTodayLocalDate());
   const [memoryDates, setMemoryDates] = useState<Set<string>>(new Set());
+  const [isMemoryExpanded, setIsMemoryExpanded] = useState(false);
   const { user, signOut } = useAuth();
   const { getWeekMemories } = usePinecone();
-  const safeAreaStyles = useIOSSafeAreaStyles();
+  const navigation = useNavigation();
 
   const loadWeekMemories = async () => {
     try {
@@ -52,7 +54,6 @@ export default function HomeScreen() {
 
   useEffect(() => {
     loadWeekMemories();
-    // Ensure today is selected when app loads
     setSelectedDate(getTodayLocalDate());
   }, [user]);
 
@@ -72,16 +73,29 @@ export default function HomeScreen() {
     }
   };
 
+  const handleMemoryExpanded = (isExpanded: boolean) => {
+    setIsMemoryExpanded(isExpanded);
+  };
+
+  // Control tab bar visibility based on memory expansion
+  useEffect(() => {
+    navigation.setOptions({
+      tabBarStyle: isMemoryExpanded 
+        ? { display: 'none' } 
+        : {
+            backgroundColor: '#000000',
+            borderTopWidth: 0,
+            elevation: 0,
+            shadowOpacity: 0,
+          }
+    });
+  }, [isMemoryExpanded, navigation]);
+
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Good Morning';
     if (hour < 17) return 'Good Afternoon';
     return 'Good Evening';
-  };
-
-  const getTodayStatus = () => {
-    const today = new Date().toISOString().split('T')[0];
-    return memoryDates.has(today) ? 'Memory captured ✨' : 'Ready to capture today?';
   };
 
   const handleSignOut = () => {
@@ -99,125 +113,114 @@ export default function HomeScreen() {
     );
   };
 
+  const getSelectedDateTitle = () => {
+    const today = getTodayLocalDate();
+    if (selectedDate === today) {
+      return 'Today';
+    }
+    
+    const date = new Date(selectedDate + 'T00:00:00');
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+    const monthDay = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+    
+    return `${dayName}, ${monthDay}`;
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar barStyle="dark-content" backgroundColor={IOSColors.systemGroupedBackground} />
+      <StatusBar barStyle="dark-content" backgroundColor={ModernColors.background} />
       
-      {/* Header */}
+      {/* Header - No Card Background */}
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.greeting}>{getGreeting()}</Text>
-          <Text style={styles.status}>{getTodayStatus()}</Text>
-          {user && (
-            <Text style={styles.userInfo}>
-              {user.fullName || user.email || 'Signed in with Apple'}
+        <View style={styles.headerContent}>
+          <View>
+            <Text style={styles.greeting}>
+              {getGreeting()}
             </Text>
-          )}
-        </View>
-        <View style={styles.headerRight}>
-          <View style={styles.streakContainer}>
-            <Text style={styles.streakNumber}>{memoryDates.size}</Text>
-            <Text style={styles.streakLabel}>memories</Text>
           </View>
-          <TouchableOpacity style={styles.profileButton} onPress={handleSignOut}>
-            <Text style={styles.profileButtonText}>👤</Text>
+          <TouchableOpacity onPress={handleSignOut}>
+            <Text style={styles.menuIcon}>⋮</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView 
         style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Weekly Calendar */}
+        {/* Calendar - Clean Design */}
         <WeeklyCalendar
           onDateSelect={handleDateSelect}
           selectedDate={selectedDate}
           memoryDates={memoryDates}
         />
 
-        {/* Daily Memory Section */}
-        <DailyMemory 
-          selectedDate={selectedDate}
-          onMemoryUpdate={handleMemoryUpdate}
-        />
-
-        {/* Bottom spacing */}
-        <View style={styles.bottomSpacing} />
+        {/* Today Section */}
+        <View style={styles.todaySection}>
+          <Text style={styles.sectionTitle}>Today</Text>
+        </View>
       </ScrollView>
+
+      {/* Daily Memory with Wallet Cards - positioned absolutely at bottom */}
+      <DailyMemory 
+        selectedDate={selectedDate}
+        onMemoryUpdate={handleMemoryUpdate}
+        onExpandedChange={handleMemoryExpanded}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    ...IOSLayoutStyles.container,
+    ...ModernLayoutStyles.container,
   },
+  
+  // Header - Clean, no card background
   header: {
-    ...IOSLayoutStyles.spaceBetween,
-    paddingHorizontal: IOSSpacing.md,
-    paddingTop: IOSSpacing.lg,
-    paddingBottom: IOSSpacing.md,
-    backgroundColor: IOSColors.systemGroupedBackground,
+    paddingHorizontal: ModernSpacing.lg,
+    paddingTop: ModernSpacing.md,
+    paddingBottom: ModernSpacing.sm,
   },
-  headerLeft: {
-    flex: 1,
-  },
-  headerRight: {
+  
+  headerContent: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: IOSSpacing.sm,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
   },
+  
   greeting: {
-    ...IOSTypography.title2,
-    marginBottom: 2,
-    fontWeight: '600',
+    ...ModernTypography.title2, // Changed from largeTitle to title2 for smaller size
+    color: ModernColors.primary,
+    fontWeight: '700',
+    marginBottom: 4,
   },
-  status: {
-    ...IOSTypography.subhead,
-    color: IOSColors.secondaryLabel,
-  },
-  userInfo: {
-    ...IOSTypography.caption1,
-    color: IOSColors.tertiaryLabel,
-    marginTop: 2,
-  },
-  streakContainer: {
-    backgroundColor: IOSColors.systemBlue + '15', // 15% opacity
-    borderRadius: IOSBorderRadius.xl,
-    paddingHorizontal: IOSSpacing.md,
-    paddingVertical: IOSSpacing.sm,
-    minWidth: 70,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  profileButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: IOSColors.tertiarySystemFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  profileButtonText: {
-    fontSize: 18,
-  },
-  streakNumber: {
-    ...IOSTypography.title2,
-    color: IOSColors.systemBlue,
+  
+  menuIcon: {
+    ...ModernTypography.title1,
+    color: ModernColors.primary,
     fontWeight: '700',
   },
-  streakLabel: {
-    ...IOSTypography.caption2,
-    color: IOSColors.systemBlue,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: -2,
-  },
+  
   scrollView: {
     flex: 1,
   },
-  bottomSpacing: {
-    height: IOSSpacing['2xl'],
+  
+  scrollContent: {
+    paddingBottom: 100, // Space for FAB
+  },
+  
+  // Today Section
+  todaySection: {
+    paddingHorizontal: ModernSpacing.lg,
+    marginBottom: ModernSpacing.xl,
+  },
+  
+  sectionTitle: {
+    ...ModernTypography.title3,
+    color: ModernColors.primary,
+    fontWeight: '700',
+    marginBottom: ModernSpacing.md,
   },
 });
